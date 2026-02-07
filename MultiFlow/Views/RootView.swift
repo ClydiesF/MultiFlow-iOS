@@ -3,15 +3,16 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @AppStorage("hasSeenOnboarding") private var hasSeenOnboarding = false
+    @AppStorage("shouldShowOnboarding") private var shouldShowOnboarding = false
 
     var body: some View {
         Group {
-            if !hasSeenOnboarding {
-                OnboardingView()
-            } else if authViewModel.user != nil {
-                DashboardView()
-            } else {
+            if authViewModel.user == nil {
                 AuthView()
+            } else if shouldShowOnboarding && !hasSeenOnboarding {
+                OnboardingView()
+            } else {
+                DashboardView()
             }
         }
     }

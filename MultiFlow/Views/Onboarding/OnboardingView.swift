@@ -2,6 +2,7 @@ import SwiftUI
 
 struct OnboardingView: View {
     @AppStorage("hasSeenOnboarding") private var hasSeenOnboarding = false
+    @AppStorage("shouldShowOnboarding") private var shouldShowOnboarding = false
     @State private var selection = 0
 
     private let pages: [OnboardingPage] = [
@@ -92,6 +93,7 @@ struct OnboardingView: View {
         HStack(spacing: 12) {
             Button("Skip") {
                 hasSeenOnboarding = true
+                shouldShowOnboarding = false
             }
             .font(.system(.footnote, design: .rounded).weight(.semibold))
             .foregroundStyle(Color.richBlack.opacity(0.7))
@@ -105,6 +107,7 @@ struct OnboardingView: View {
                     }
                 } else {
                     hasSeenOnboarding = true
+                    shouldShowOnboarding = false
                 }
             }
             .buttonStyle(PrimaryButtonStyle())

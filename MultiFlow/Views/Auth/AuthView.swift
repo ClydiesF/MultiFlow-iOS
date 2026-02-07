@@ -3,6 +3,7 @@ import AuthenticationServices
 
 struct AuthView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
+    @AppStorage("shouldShowOnboarding") private var shouldShowOnboarding = false
     @State private var isLogin = true
     @State private var email = ""
     @State private var password = ""
@@ -40,6 +41,9 @@ struct AuthView: View {
                                 await authViewModel.signIn(email: email, password: password)
                             } else {
                                 await authViewModel.signUp(email: email, password: password)
+                                if authViewModel.didCreateAccount {
+                                    shouldShowOnboarding = true
+                                }
                             }
                         }
                     }
@@ -50,6 +54,9 @@ struct AuthView: View {
                     } onCompletion: { result in
                         Task {
                             await authViewModel.handleAppleCompletion(result)
+                            if authViewModel.didCreateAccount {
+                                shouldShowOnboarding = true
+                            }
                         }
                     }
                     .signInWithAppleButtonStyle(.black)

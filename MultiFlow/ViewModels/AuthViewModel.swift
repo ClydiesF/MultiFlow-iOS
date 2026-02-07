@@ -1,12 +1,12 @@
 import Foundation
 import AuthenticationServices
 import FirebaseAuth
-internal import Combine
 
 @MainActor
 final class AuthViewModel: ObservableObject {
     @Published var user: User?
     @Published var authError: String?
+    @Published var didCreateAccount = false
 
     private var handle: AuthStateDidChangeListenerHandle?
     private var currentNonce: String?
@@ -28,6 +28,7 @@ final class AuthViewModel: ObservableObject {
         authError = nil
         do {
             _ = try await Auth.auth().createUser(withEmail: email, password: password)
+            didCreateAccount = true
         } catch {
             authError = error.localizedDescription
         }
@@ -86,6 +87,7 @@ final class AuthViewModel: ObservableObject {
 
             do {
                 _ = try await Auth.auth().signIn(with: firebaseCredential)
+                didCreateAccount = true
             } catch {
                 authError = error.localizedDescription
             }

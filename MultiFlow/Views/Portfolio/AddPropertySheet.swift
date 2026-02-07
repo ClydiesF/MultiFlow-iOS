@@ -545,6 +545,7 @@ struct AddPropertySheet: View {
         do {
             try await propertyStore.addProperty(property)
             didAddProperty = true
+            dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }
