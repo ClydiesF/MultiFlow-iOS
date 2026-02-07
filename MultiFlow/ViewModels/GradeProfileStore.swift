@@ -1,6 +1,6 @@
 import Foundation
 import FirebaseFirestore
-internal import Combine
+import Combine
 
 @MainActor
 final class GradeProfileStore: ObservableObject {

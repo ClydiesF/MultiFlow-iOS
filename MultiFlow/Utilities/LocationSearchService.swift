@@ -1,6 +1,6 @@
 import Foundation
 import MapKit
-internal import Combine
+import Combine
 
 @MainActor
 final class LocationSearchService: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {

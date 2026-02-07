@@ -31,7 +31,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3B4E1F0A2F3186DC003B6336 /* FirebaseFirestore in Frameworks */,
-			9B872250D7AE42A8A575792D /* FirebaseStorage in Frameworks */,
+				9B872250D7AE42A8A575792D /* FirebaseStorage in Frameworks */,
 				3B4E1F092F3186DC003B6336 /* FirebaseAuth in Frameworks */,
 				3B4E1F082F3186DC003B6336 /* FirebaseCore in Frameworks */,
 			);
@@ -283,20 +283,21 @@
 				DEVELOPMENT_TEAM = 4D9Z74XGM7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "MultiFlow: Property Tool";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Allow camera access to capture property photos.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Allow saving property photos to your library.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Allow access to your photo library to add property photos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Allow camera access to capture property photos.";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Allow access to your photo library to add property photos.";
-				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Allow saving property photos to your library.";
-								INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.HCHO.MultiFlow;
+				PRODUCT_BUNDLE_IDENTIFIER = com.HCHO.MultiFlowPropertyEvaluator;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -319,20 +320,21 @@
 				DEVELOPMENT_TEAM = 4D9Z74XGM7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "MultiFlow: Property Tool";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Allow camera access to capture property photos.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Allow saving property photos to your library.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Allow access to your photo library to add property photos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Allow camera access to capture property photos.";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Allow access to your photo library to add property photos.";
-				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Allow saving property photos to your library.";
-								INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.HCHO.MultiFlow;
+				PRODUCT_BUNDLE_IDENTIFIER = com.HCHO.MultiFlowPropertyEvaluator;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -397,15 +399,15 @@
 			package = D9ED4EB8D2F04F81AC84516D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseAuth;
 		};
-		F5B896CCE9E84B4FB9661BF8 /* FirebaseFirestore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = D9ED4EB8D2F04F81AC84516D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseFirestore;
-		};
 		2A483E10B6A5462099A6D7C7 /* FirebaseStorage */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = D9ED4EB8D2F04F81AC84516D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseStorage;
+		};
+		F5B896CCE9E84B4FB9661BF8 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D9ED4EB8D2F04F81AC84516D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
