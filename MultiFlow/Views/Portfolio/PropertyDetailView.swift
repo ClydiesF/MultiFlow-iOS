@@ -23,6 +23,7 @@ struct PropertyDetailView: View {
     @State private var showDeleteConfirm = false
     @State private var deleteError: String?
     @State private var mapSnapshotURL: URL?
+    @State private var mapCoordinate: CLLocationCoordinate2D?
     @State private var isLoadingMap = false
 
     var body: some View {
@@ -262,28 +263,54 @@ struct PropertyDetailView: View {
         }
         .cardStyle()
     }
-
     private var mortgageSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Mortgage Estimator")
-                .font(.system(.title3, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Mortgage Estimator")
+                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Text("Payment mix and monthly impact")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.6))
+                }
+                Spacer()
+                if let breakdown = mortgageBreakdown {
+                    Text("$\(Formatters.currency.string(from: NSNumber(value: breakdown.monthlyTotal)) ?? "$0")")
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.richBlack)
+                }
+            }
 
             if let breakdown = mortgageBreakdown {
-                Picker("Term", selection: $termOverride) {
-                    Text("15").tag(Optional(15))
-                    Text("20").tag(Optional(20))
-                    Text("30").tag(Optional(30))
+                VStack(spacing: 12) {
+                    Picker("Term", selection: $termOverride) {
+                        Text("15").tag(Optional(15))
+                        Text("20").tag(Optional(20))
+                        Text("30").tag(Optional(30))
+                    }
+                    .pickerStyle(.segmented)
+
+                    MortgageDonutChart(breakdown: breakdown)
+                        .frame(height: 210)
+
+                    VStack(spacing: 10) {
+                        mortgageLine(title: "Principal & Interest", value: breakdown.monthlyPrincipal + breakdown.monthlyInterest, tint: Color.primaryYellow)
+                        mortgageLine(title: "Taxes", value: breakdown.monthlyTaxes, tint: Color.softGray)
+                        mortgageLine(title: "Insurance", value: breakdown.monthlyInsurance, tint: Color.softGray.opacity(0.7))
+                    }
+
+                    HStack {
+                        Text("Monthly Total")
+                            .font(.system(.footnote, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.richBlack.opacity(0.6))
+                        Spacer()
+                        Text(Formatters.currency.string(from: NSNumber(value: breakdown.monthlyTotal)) ?? "$0")
+                            .font(.system(.subheadline, design: .rounded).weight(.bold))
+                            .foregroundStyle(Color.richBlack)
+                    }
+                    .padding(.top, 6)
                 }
-                .pickerStyle(.segmented)
-
-                MortgageDonutChart(breakdown: breakdown)
-                    .frame(height: 220)
-
-                MetricRow(title: "Monthly P&I", value: Formatters.currency.string(from: NSNumber(value: breakdown.monthlyPrincipal + breakdown.monthlyInterest)) ?? "$0")
-                MetricRow(title: "Monthly Taxes", value: Formatters.currency.string(from: NSNumber(value: breakdown.monthlyTaxes)) ?? "$0")
-                MetricRow(title: "Monthly Insurance", value: Formatters.currency.string(from: NSNumber(value: breakdown.monthlyInsurance)) ?? "$0")
-                MetricRow(title: "Monthly Total", value: Formatters.currency.string(from: NSNumber(value: breakdown.monthlyTotal)) ?? "$0")
             } else {
                 Text("Add purchase price, rate, down payment, taxes, insurance, and loan term.")
                     .font(.system(.footnote, design: .rounded))
@@ -291,6 +318,21 @@ struct PropertyDetailView: View {
             }
         }
         .cardStyle()
+    }
+
+    private func mortgageLine(title: String, value: Double, tint: Color) -> some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(tint)
+                .frame(width: 28, height: 8)
+            Text(title)
+                .font(.system(.footnote, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack.opacity(0.7))
+            Spacer()
+            Text(Formatters.currency.string(from: NSNumber(value: value)) ?? "$0")
+                .font(.system(.footnote, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.richBlack)
+        }
     }
 
     private var rentRollSection: some View {
@@ -480,36 +522,86 @@ struct PropertyDetailView: View {
         }
         .cardStyle()
     }
-
     private var locationSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Location")
-                .font(.system(.title3, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack)
-
-            ZStack {
-                if let url = mapSnapshotURL {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().scaledToFill()
-                        default:
-                            Color.softGray
-                        }
-                    }
-                } else {
-                    VStack(spacing: 6) {
+        Button {
+            openInMaps()
+        } label: {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Location")
+                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Spacer()
+                    HStack(spacing: 6) {
                         Image(systemName: "map")
-                            .font(.system(size: 22, weight: .semibold))
-                        Text(isLoadingMap ? "Loading map..." : "No map available")
-                            .font(.system(.footnote, design: .rounded))
+                        Text("Open Map")
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
                     }
                     .foregroundStyle(Color.richBlack.opacity(0.6))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.softGray)
+                    )
                 }
+
+                ZStack(alignment: .bottomLeading) {
+                    if let url = mapSnapshotURL {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image.resizable().scaledToFill()
+                            default:
+                                Color.softGray
+                            }
+                        }
+                    } else {
+                        Color.softGray
+                        VStack(spacing: 6) {
+                            Image(systemName: "map")
+                                .font(.system(size: 22, weight: .semibold))
+                            Text(isLoadingMap ? "Locating..." : "No map preview")
+                                .font(.system(.footnote, design: .rounded))
+                        }
+                        .foregroundStyle(Color.richBlack.opacity(0.6))
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(displayProperty.address)
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.richBlack)
+                        if let city = displayProperty.city, let state = displayProperty.state, let zip = displayProperty.zipCode,
+                           !city.isEmpty, !state.isEmpty, !zip.isEmpty {
+                            Text("\(city), \(state) \(zip)")
+                                .font(.system(.caption, design: .rounded))
+                                .foregroundStyle(Color.richBlack.opacity(0.6))
+                        }
+                    }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.cardSurface.opacity(0.95))
+                            .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 6)
+                    )
+                    .padding(12)
+                }
+                .frame(height: 180)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.black.opacity(0.04), lineWidth: 1)
+                )
+
+                HStack(spacing: 8) {
+                    Image(systemName: "mappin.and.ellipse")
+                    Text(mapCoordinate == nil ? "Tap to locate in Maps" : "Open in Apple Maps")
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                }
+                .foregroundStyle(Color.richBlack.opacity(0.6))
             }
-            .frame(height: 160)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
+        .buttonStyle(.plain)
         .cardStyle()
     }
 
@@ -544,31 +636,76 @@ struct PropertyDetailView: View {
         }
         .cardStyle()
     }
-
     private var summarySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Summary")
-                .font(.system(.title3, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack)
-
-            let totalMonthlyRent = displayProperty.rentRoll.reduce(0) { $0 + $1.monthlyRent }
-            let totalAnnualRent = totalMonthlyRent * 12
-
-            MetricRow(title: "Annual Rent", value: Formatters.currency.string(from: NSNumber(value: totalAnnualRent)) ?? "$0")
-            MetricRow(title: "Monthly Rent", value: Formatters.currency.string(from: NSNumber(value: totalMonthlyRent)) ?? "$0")
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Summary")
+                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Text("Core performance snapshot")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.6))
+                }
+                Spacer()
+                if let metrics = MetricsEngine.computeMetrics(property: displayProperty) {
+                    let state = cashflowState(for: metrics.annualCashFlow)
+                    Text(state.label)
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(state.color)
+                        )
+                }
+            }
 
             if let metrics = MetricsEngine.computeMetrics(property: displayProperty) {
-                MetricRow(title: "NOI", value: Formatters.currency.string(from: NSNumber(value: metrics.netOperatingIncome)) ?? "$0")
-                MetricRow(title: "Monthly NOI", value: Formatters.currency.string(from: NSNumber(value: metrics.netOperatingIncome / 12)) ?? "$0")
-                MetricRow(title: "Annual Cash Flow", value: Formatters.currency.string(from: NSNumber(value: metrics.annualCashFlow)) ?? "$0")
-                performanceBadge(for: metrics)
+                let annualCash = metrics.annualCashFlow
+                let monthlyCash = annualCash / 12
+                let noi = metrics.netOperatingIncome
+                let capRate = metrics.capRate
+
+                VStack(spacing: 12) {
+                    HStack(spacing: 12) {
+                        summaryTile(title: "Net Operating Income", value: Formatters.currency.string(from: NSNumber(value: noi)) ?? "$0")
+                        summaryTile(title: "Monthly Cash Flow", value: Formatters.currency.string(from: NSNumber(value: monthlyCash)) ?? "$0")
+                    }
+                    HStack(spacing: 12) {
+                        summaryTile(title: "Annual Cash Flow", value: Formatters.currency.string(from: NSNumber(value: annualCash)) ?? "$0")
+                        summaryTile(title: "Cap Rate", value: Formatters.percent.string(from: NSNumber(value: capRate)) ?? "0%")
+                    }
+                }
             } else {
-                Text("Add financing inputs to show NOI and cash flow.")
+                Text("Add financing inputs to show NOI, cash flow, and cap rate.")
                     .font(.system(.footnote, design: .rounded))
                     .foregroundStyle(Color.richBlack.opacity(0.6))
             }
         }
         .cardStyle()
+    }
+
+    private func summaryTile(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack.opacity(0.6))
+            Text(value)
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.richBlack)
+        }
+        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.cardSurface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primaryYellow.opacity(0.75), lineWidth: 1)
+        )
     }
 
     private var exportSection: some View {
@@ -778,6 +915,18 @@ struct PropertyDetailView: View {
     }
 
     @MainActor
+
+    private func openInMaps() {
+        guard let coordinate = mapCoordinate else { return }
+        let placemark = MKPlacemark(coordinate: coordinate)
+        let mapItem = MKMapItem(placemark: placemark)
+        mapItem.name = displayProperty.address
+        mapItem.openInMaps(launchOptions: [
+            MKLaunchOptionsMapCenterKey: NSValue(mkCoordinate: coordinate),
+            MKLaunchOptionsMapSpanKey: NSValue(mkCoordinateSpan: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01))
+        ])
+    }
+
     private func fetchMapSnapshot() async {
         if mapSnapshotURL != nil { return }
         let addressParts = [displayProperty.address, displayProperty.city, displayProperty.state, displayProperty.zipCode]
@@ -791,6 +940,7 @@ struct PropertyDetailView: View {
         do {
             let placemarks = try await geocoder.geocodeAddressString(fullAddress)
             if let coordinate = placemarks.first?.location?.coordinate {
+                mapCoordinate = coordinate
                 let url = try await MapSnapshotService.snapshotURL(for: coordinate, title: displayProperty.address)
                 mapSnapshotURL = url
             }

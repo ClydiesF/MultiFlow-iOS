@@ -18,171 +18,8 @@ struct SettingsView: View {
                 VStack(spacing: 20) {
                     header
 
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Default Operating Expense")
-                            .font(.system(.headline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.richBlack)
-
-                        Text("Used when calculating NOI with the standard expense toggle.")
-                            .font(.system(.footnote, design: .rounded))
-                            .foregroundStyle(Color.richBlack.opacity(0.6))
-
-                        HStack {
-                            TextField("", value: $standardOperatingExpenseRate, formatter: NumberFormatter())
-                                .keyboardType(.decimalPad)
-                                .textFieldStyle(.plain)
-                                .padding(.vertical, 12)
-                                .padding(.horizontal, 12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.softGray)
-                                )
-                                .onChange(of: standardOperatingExpenseRate) { _, newValue in
-                                    let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
-                                    if let sanitizedValue = Double(sanitized) {
-                                        standardOperatingExpenseRate = sanitizedValue
-                                    }
-                                }
-                            Text("%")
-                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.richBlack.opacity(0.7))
-                        }
-                    }
-                    .cardStyle()
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Cashflow Break-Even Threshold")
-                            .font(.system(.headline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.richBlack)
-
-                        Text("Used to label deals as Break-Even when monthly cashflow meets or exceeds this value.")
-                            .font(.system(.footnote, design: .rounded))
-                            .foregroundStyle(Color.richBlack.opacity(0.6))
-
-                        HStack {
-                            TextField("", value: $cashflowBreakEvenThreshold, formatter: NumberFormatter())
-                                .keyboardType(.decimalPad)
-                                .textFieldStyle(.plain)
-                                .padding(.vertical, 12)
-                                .padding(.horizontal, 12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.softGray)
-                                )
-                                .onChange(of: cashflowBreakEvenThreshold) { _, newValue in
-                                    let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
-                                    if let sanitizedValue = Double(sanitized) {
-                                        cashflowBreakEvenThreshold = sanitizedValue
-                                    }
-                                }
-                            Text("USD")
-                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.richBlack.opacity(0.7))
-                        }
-                    }
-                    .cardStyle()
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Equity & Tax Defaults")
-                            .font(.system(.headline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.richBlack)
-
-                        Text("Used to prefill evaluator assumptions.")
-                            .font(.system(.footnote, design: .rounded))
-                            .foregroundStyle(Color.richBlack.opacity(0.6))
-
-                        HStack {
-                            TextField("", value: $defaultAppreciationRate, formatter: NumberFormatter())
-                                .keyboardType(.decimalPad)
-                                .textFieldStyle(.plain)
-                                .padding(.vertical, 12)
-                                .padding(.horizontal, 12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.softGray)
-                                )
-                                .onChange(of: defaultAppreciationRate) { _, newValue in
-                                    let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
-                                    if let sanitizedValue = Double(sanitized) {
-                                        defaultAppreciationRate = sanitizedValue
-                                    }
-                                }
-                            Text("Appreciation %")
-                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.richBlack.opacity(0.7))
-                        }
-
-                        HStack {
-                            TextField("", value: $defaultMarginalTaxRate, formatter: NumberFormatter())
-                                .keyboardType(.decimalPad)
-                                .textFieldStyle(.plain)
-                                .padding(.vertical, 12)
-                                .padding(.horizontal, 12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.softGray)
-                                )
-                                .onChange(of: defaultMarginalTaxRate) { _, newValue in
-                                    let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
-                                    if let sanitizedValue = Double(sanitized) {
-                                        defaultMarginalTaxRate = sanitizedValue
-                                    }
-                                }
-                            Text("Tax Rate %")
-                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.richBlack.opacity(0.7))
-                        }
-
-                        HStack {
-                            TextField("", value: $defaultLandValuePercent, formatter: NumberFormatter())
-                                .keyboardType(.decimalPad)
-                                .textFieldStyle(.plain)
-                                .padding(.vertical, 12)
-                                .padding(.horizontal, 12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.softGray)
-                                )
-                                .onChange(of: defaultLandValuePercent) { _, newValue in
-                                    let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
-                                    if let sanitizedValue = Double(sanitized) {
-                                        defaultLandValuePercent = sanitizedValue
-                                    }
-                                }
-                            Text("Land Value %")
-                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.richBlack.opacity(0.7))
-                        }
-                    }
-                    .cardStyle()
-
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Account")
-                            .font(.system(.headline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.richBlack)
-
-                        if let email = authViewModel.user?.email {
-                            Text(email)
-                                .font(.system(.body, design: .rounded))
-                                .foregroundStyle(Color.richBlack.opacity(0.7))
-                        }
-                    }
-                    .cardStyle()
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Appearance")
-                            .font(.system(.headline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.richBlack)
-
-                        Picker("Theme", selection: $colorSchemePreference) {
-                            Text("System").tag(0)
-                            Text("Light").tag(1)
-                            Text("Dark").tag(2)
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                    .cardStyle()
+                    accountAppearanceSection
+                    estimatedDefaultsSection
 
                     Button("Sign Out") {
                         authViewModel.signOut()
@@ -199,6 +36,181 @@ struct SettingsView: View {
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+
+    private var accountAppearanceSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center) {
+                Text("Account & Appearance")
+                    .font(.system(.headline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack)
+                Spacer()
+                Image(systemName: "person.crop.circle")
+                    .foregroundStyle(Color.richBlack.opacity(0.5))
+            }
+            if let email = authViewModel.user?.email {
+                Text(email)
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(Color.richBlack.opacity(0.7))
+            }
+
+            Divider().background(Color.richBlack.opacity(0.1))
+
+            Text("Appearance")
+                .font(.system(.footnote, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack.opacity(0.6))
+
+            Picker("Theme", selection: $colorSchemePreference) {
+                Text("System").tag(0)
+                Text("Light").tag(1)
+                Text("Dark").tag(2)
+            }
+            .pickerStyle(.segmented)
+        }
+        .cardStyle()
+    }
+
+    private var estimatedDefaultsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Estimated Defaults")
+                        .font(.system(.headline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Text("Used across evaluator assumptions and grading.")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.6))
+                }
+                Spacer()
+                Image(systemName: "slider.horizontal.3")
+                    .foregroundStyle(Color.richBlack.opacity(0.5))
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Default Operating Expense")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.7))
+
+                HStack {
+                    TextField("", value: $standardOperatingExpenseRate, formatter: NumberFormatter())
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.plain)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.softGray)
+                        )
+                        .onChange(of: standardOperatingExpenseRate) { _, newValue in
+                            let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
+                            if let sanitizedValue = Double(sanitized) {
+                                standardOperatingExpenseRate = sanitizedValue
+                            }
+                        }
+                    Text("%")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.7))
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cashflow Break-Even Threshold")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.7))
+
+                HStack {
+                    TextField("", value: $cashflowBreakEvenThreshold, formatter: NumberFormatter())
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.plain)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.softGray)
+                        )
+                        .onChange(of: cashflowBreakEvenThreshold) { _, newValue in
+                            let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
+                            if let sanitizedValue = Double(sanitized) {
+                                cashflowBreakEvenThreshold = sanitizedValue
+                            }
+                        }
+                    Text("USD")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.7))
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Equity & Tax Defaults")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.7))
+
+                HStack {
+                    TextField("", value: $defaultAppreciationRate, formatter: NumberFormatter())
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.plain)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.softGray)
+                        )
+                        .onChange(of: defaultAppreciationRate) { _, newValue in
+                            let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
+                            if let sanitizedValue = Double(sanitized) {
+                                defaultAppreciationRate = sanitizedValue
+                            }
+                        }
+                    Text("Appreciation %")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.7))
+                }
+
+                HStack {
+                    TextField("", value: $defaultMarginalTaxRate, formatter: NumberFormatter())
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.plain)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.softGray)
+                        )
+                        .onChange(of: defaultMarginalTaxRate) { _, newValue in
+                            let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
+                            if let sanitizedValue = Double(sanitized) {
+                                defaultMarginalTaxRate = sanitizedValue
+                            }
+                        }
+                    Text("Tax Rate %")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.7))
+                }
+
+                HStack {
+                    TextField("", value: $defaultLandValuePercent, formatter: NumberFormatter())
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.plain)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.softGray)
+                        )
+                        .onChange(of: defaultLandValuePercent) { _, newValue in
+                            let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
+                            if let sanitizedValue = Double(sanitized) {
+                                defaultLandValuePercent = sanitizedValue
+                            }
+                        }
+                    Text("Land Value %")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.7))
+                }
+            }
+        }
+        .cardStyle()
     }
 
     private var header: some View {

@@ -405,7 +405,7 @@ struct EditPropertySheet: View {
             let url = try await ImageUploadService.uploadPropertyImage(image, propertyId: property.id)
             imageURL = url.absoluteString
         } catch {
-            imageError = "Unable to upload photo."
+            imageError = error.localizedDescription
         }
         isUploadingImage = false
     }
