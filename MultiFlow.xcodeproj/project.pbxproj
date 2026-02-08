@@ -7,10 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		3B4E1F082F3186DC003B6336 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0C9306F160DD4804AADBCCF0 /* FirebaseCore */; };
-		3B4E1F092F3186DC003B6336 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 2450156B61C04F9BB010B987 /* FirebaseAuth */; };
-		3B4E1F0A2F3186DC003B6336 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = F5B896CCE9E84B4FB9661BF8 /* FirebaseFirestore */; };
-		9B872250D7AE42A8A575792D /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 2A483E10B6A5462099A6D7C7 /* FirebaseStorage */; };
+		B9C709712D9A4A63AA0DECEE /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = B8BE7DE4E09A4A2A90A70858 /* Supabase */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,10 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3B4E1F0A2F3186DC003B6336 /* FirebaseFirestore in Frameworks */,
-				9B872250D7AE42A8A575792D /* FirebaseStorage in Frameworks */,
-				3B4E1F092F3186DC003B6336 /* FirebaseAuth in Frameworks */,
-				3B4E1F082F3186DC003B6336 /* FirebaseCore in Frameworks */,
+				B9C709712D9A4A63AA0DECEE /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -84,10 +78,7 @@
 			);
 			name = MultiFlow;
 			packageProductDependencies = (
-				0C9306F160DD4804AADBCCF0 /* FirebaseCore */,
-				2450156B61C04F9BB010B987 /* FirebaseAuth */,
-				F5B896CCE9E84B4FB9661BF8 /* FirebaseFirestore */,
-				2A483E10B6A5462099A6D7C7 /* FirebaseStorage */,
+				B8BE7DE4E09A4A2A90A70858 /* Supabase */,
 			);
 			productName = MultiFlow;
 			productReference = 3B4E1EB82F3173A4003B6336 /* MultiFlow.app */;
@@ -118,7 +109,7 @@
 			mainGroup = 3B4E1EAF2F3173A4003B6336;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				3B4E1F542F31883A003B6336 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				BC1F4CEEA32A4F3A80BFD53A /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3B4E1EB92F3173A4003B6336 /* Products */;
@@ -282,7 +273,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4D9Z74XGM7;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "MultiFlow: Property Tool";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Allow camera access to capture property photos.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Allow saving property photos to your library.";
@@ -319,7 +311,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4D9Z74XGM7;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "MultiFlow: Property Tool";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Allow camera access to capture property photos.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Allow saving property photos to your library.";
@@ -370,44 +363,21 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		3B4E1F542F31883A003B6336 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+		BC1F4CEEA32A4F3A80BFD53A /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			repositoryURL = "https://github.com/supabase/supabase-swift";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 12.8.0;
-			};
-		};
-		D9ED4EB8D2F04F81AC84516D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 11.0.0;
+				minimumVersion = 2.0.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		0C9306F160DD4804AADBCCF0 /* FirebaseCore */ = {
+		B8BE7DE4E09A4A2A90A70858 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = D9ED4EB8D2F04F81AC84516D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseCore;
-		};
-		2450156B61C04F9BB010B987 /* FirebaseAuth */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = D9ED4EB8D2F04F81AC84516D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseAuth;
-		};
-		2A483E10B6A5462099A6D7C7 /* FirebaseStorage */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = D9ED4EB8D2F04F81AC84516D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseStorage;
-		};
-		F5B896CCE9E84B4FB9661BF8 /* FirebaseFirestore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = D9ED4EB8D2F04F81AC84516D /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseFirestore;
+			package = BC1F4CEEA32A4F3A80BFD53A /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -9,10 +9,10 @@ struct RentUnit: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id
-        case monthlyRent = "MonthlyRent"
-        case unitType = "UnitType"
-        case bedrooms = "Bedrooms"
-        case bathrooms = "Bathrooms"
+        case monthlyRent = "monthly_rent"
+        case unitType = "unit_type"
+        case bedrooms
+        case bathrooms
     }
 
     init(id: String = UUID().uuidString, monthlyRent: Double, unitType: String, bedrooms: Double, bathrooms: Double) {

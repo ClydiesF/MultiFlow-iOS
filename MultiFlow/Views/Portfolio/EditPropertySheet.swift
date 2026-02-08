@@ -14,6 +14,7 @@ struct EditPropertySheet: View {
     @State private var state = ""
     @State private var zipCode = ""
     @State private var imageURL = ""
+    @State private var imagePath: String?
     @State private var purchasePrice = ""
     @State private var downPaymentPercent = ""
     @State private var interestRate = ""
@@ -402,8 +403,9 @@ struct EditPropertySheet: View {
         imageError = nil
         isUploadingImage = true
         do {
-            let url = try await ImageUploadService.uploadPropertyImage(image, propertyId: property.id)
-            imageURL = url.absoluteString
+            let uploaded = try await ImageUploadService.uploadPropertyImage(image, propertyId: property.id)
+            imagePath = uploaded.path
+            imageURL = uploaded.signedURL.absoluteString
         } catch {
             imageError = error.localizedDescription
         }
@@ -415,6 +417,7 @@ struct EditPropertySheet: View {
         city = property.city ?? ""
         state = property.state ?? ""
         zipCode = property.zipCode ?? ""
+        imagePath = property.imagePath
         imageURL = property.imageURL
         purchasePrice = Formatters.currencyTwo.string(from: NSNumber(value: property.purchasePrice)) ?? String(property.purchasePrice)
         downPaymentPercent = property.downPaymentPercent.map { "\($0)" } ?? ""
@@ -465,10 +468,12 @@ struct EditPropertySheet: View {
 
         let updated = Property(
             id: property.id,
+            userId: property.userId,
             address: address,
             city: city.isEmpty ? nil : city,
             state: state.isEmpty ? nil : state,
             zipCode: zipCode.isEmpty ? nil : zipCode,
+            imagePath: imagePath,
             imageURL: imageURL,
             purchasePrice: purchasePriceValue,
             rentRoll: rentUnits,

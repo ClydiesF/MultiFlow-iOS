@@ -15,6 +15,7 @@ struct AddPropertySheet: View {
     @State private var state = ""
     @State private var zipCode = ""
     @State private var imageURL = ""
+    @State private var imagePath: String?
     @State private var purchasePrice = ""
     @State private var useStandardOperatingExpense = true
     @State private var operatingExpenseRate = ""
@@ -524,6 +525,7 @@ struct AddPropertySheet: View {
             city: city.isEmpty ? nil : city,
             state: state.isEmpty ? nil : state,
             zipCode: zipCode.isEmpty ? nil : zipCode,
+            imagePath: imagePath,
             imageURL: imageURL,
             purchasePrice: purchasePriceValue,
             rentRoll: rentUnits,
@@ -563,8 +565,9 @@ struct AddPropertySheet: View {
         imageError = nil
         isUploadingImage = true
         do {
-            let url = try await ImageUploadService.uploadPropertyImage(image)
-            imageURL = url.absoluteString
+            let uploaded = try await ImageUploadService.uploadPropertyImage(image)
+            imagePath = uploaded.path
+            imageURL = uploaded.signedURL.absoluteString
         } catch {
             imageError = error.localizedDescription
         }
@@ -619,4 +622,3 @@ final class PreviewPropertyStore: ObservableObject {
         .environmentObject(GradeProfileStore())
 }
 #endif
-

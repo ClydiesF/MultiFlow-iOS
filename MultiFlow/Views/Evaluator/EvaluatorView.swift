@@ -17,6 +17,7 @@ struct EvaluatorView: View {
     @State private var state = ""
     @State private var zipCode = ""
     @State private var imageURL = ""
+    @State private var imagePath: String?
     @State private var purchasePrice = ""
     @State private var downPaymentPercent = ""
     @State private var interestRate = ""
@@ -780,6 +781,7 @@ struct EvaluatorView: View {
         state = ""
         zipCode = ""
         imageURL = ""
+        imagePath = nil
         purchasePrice = ""
         downPaymentPercent = ""
         interestRate = ""
@@ -794,15 +796,10 @@ struct EvaluatorView: View {
     private func uploadImage(_ image: UIImage) async {
         await MainActor.run { self.isUploadingImage = true; self.imageError = nil }
         do {
-            // Simulate an upload by saving to a temporary file and using its URL
-            guard let data = image.jpegData(compressionQuality: 0.8) else {
-                throw NSError(domain: "Upload", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare image data."])
-            }
-            let tmpDir = FileManager.default.temporaryDirectory
-            let fileURL = tmpDir.appendingPathComponent("evaluator_\(UUID().uuidString).jpg")
-            try data.write(to: fileURL)
+            let uploaded = try await ImageUploadService.uploadPropertyImage(image)
             await MainActor.run {
-                self.imageURL = fileURL.absoluteString
+                self.imagePath = uploaded.path
+                self.imageURL = uploaded.signedURL.absoluteString
             }
         } catch {
             await MainActor.run {
@@ -840,6 +837,7 @@ struct EvaluatorView: View {
             city: city.isEmpty ? nil : city,
             state: state.isEmpty ? nil : state,
             zipCode: zipCode.isEmpty ? nil : zipCode,
+            imagePath: imagePath,
             imageURL: imageURL,
             purchasePrice: purchasePriceValue,
             rentRoll: rentUnits,
@@ -906,6 +904,7 @@ struct EvaluatorView: View {
             city: city.isEmpty ? nil : city,
             state: state.isEmpty ? nil : state,
             zipCode: zipCode.isEmpty ? nil : zipCode,
+            imagePath: imagePath,
             imageURL: imageURL,
             purchasePrice: purchasePriceValue,
             rentRoll: rentUnits,
@@ -1064,4 +1063,3 @@ struct MetricTile: View {
             .environmentObject(GradeProfileStore())
     }
 }
-

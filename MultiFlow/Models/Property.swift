@@ -1,13 +1,14 @@
 import Foundation
-import FirebaseFirestore
 
 struct Property: Identifiable, Codable, Hashable {
-    @DocumentID var id: String?
+    var id: String?
+    var userId: String?
     var address: String
     var city: String?
     var state: String?
     var zipCode: String?
-    var imageURL: String
+    var imagePath: String?
+    var imageURL: String = ""
     var purchasePrice: Double
     var rentRoll: [RentUnit]
     var useStandardOperatingExpense: Bool?
@@ -26,35 +27,38 @@ struct Property: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id
-        case address = "Address"
-        case city = "City"
-        case state = "State"
-        case zipCode = "ZipCode"
-        case imageURL = "ImageURL"
-        case purchasePrice = "PurchasePrice"
-        case rentRoll = "RentRoll"
-        case useStandardOperatingExpense = "UseStandardOperatingExpense"
-        case operatingExpenseRate = "OperatingExpenseRate"
-        case operatingExpenses = "OperatingExpenses"
-        case annualTaxes = "AnnualTaxes"
-        case annualInsurance = "AnnualInsurance"
-        case annualTaxesInsurance = "AnnualTaxesInsurance"
-        case loanTermYears = "LoanTermYears"
-        case downPaymentPercent = "DownPaymentPercent"
-        case interestRate = "InterestRate"
-        case appreciationRate = "AppreciationRate"
-        case marginalTaxRate = "MarginalTaxRate"
-        case landValuePercent = "LandValuePercent"
-        case gradeProfileId = "GradeProfileId"
+        case userId = "user_id"
+        case address
+        case city
+        case state
+        case zipCode = "zip_code"
+        case imagePath = "image_path"
+        case purchasePrice = "purchase_price"
+        case rentRoll = "rent_roll"
+        case useStandardOperatingExpense = "use_standard_operating_expense"
+        case operatingExpenseRate = "operating_expense_rate"
+        case operatingExpenses = "operating_expenses"
+        case annualTaxes = "annual_taxes"
+        case annualInsurance = "annual_insurance"
+        case annualTaxesInsurance = "annual_taxes_insurance"
+        case loanTermYears = "loan_term_years"
+        case downPaymentPercent = "down_payment_percent"
+        case interestRate = "interest_rate"
+        case appreciationRate = "appreciation_rate"
+        case marginalTaxRate = "marginal_tax_rate"
+        case landValuePercent = "land_value_percent"
+        case gradeProfileId = "grade_profile_id"
     }
 
     init(
         id: String? = nil,
+        userId: String? = nil,
         address: String,
         city: String? = nil,
         state: String? = nil,
         zipCode: String? = nil,
-        imageURL: String,
+        imagePath: String? = nil,
+        imageURL: String = "",
         purchasePrice: Double,
         rentRoll: [RentUnit],
         useStandardOperatingExpense: Bool? = nil,
@@ -72,10 +76,12 @@ struct Property: Identifiable, Codable, Hashable {
         gradeProfileId: String? = nil
     ) {
         self.id = id
+        self.userId = userId
         self.address = address
         self.city = city
         self.state = state
         self.zipCode = zipCode
+        self.imagePath = imagePath
         self.imageURL = imageURL
         self.purchasePrice = purchasePrice
         self.rentRoll = rentRoll

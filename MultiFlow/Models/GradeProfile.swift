@@ -1,8 +1,8 @@
 import Foundation
-import FirebaseFirestore
 
 struct GradeProfile: Identifiable, Codable, Hashable {
-    @DocumentID var id: String?
+    var id: String?
+    var userId: String?
     var name: String
     var weightCashOnCash: Double
     var weightDcr: Double
@@ -13,13 +13,14 @@ struct GradeProfile: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id
-        case name = "Name"
-        case weightCashOnCash = "WeightCashOnCash"
-        case weightDcr = "WeightDcr"
-        case weightCapRate = "WeightCapRate"
-        case weightCashFlow = "WeightCashFlow"
-        case weightEquityGain = "WeightEquityGain"
-        case colorHex = "ColorHex"
+        case userId = "user_id"
+        case name
+        case weightCashOnCash = "weight_cash_on_cash"
+        case weightDcr = "weight_dcr"
+        case weightCapRate = "weight_cap_rate"
+        case weightCashFlow = "weight_cash_flow"
+        case weightEquityGain = "weight_equity_gain"
+        case colorHex = "color_hex"
     }
 
     static var defaultProfile: GradeProfile {

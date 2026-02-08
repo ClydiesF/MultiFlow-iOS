@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import FirebaseCore
 
 @main
 struct MultiFlowApp: App {
@@ -16,7 +15,7 @@ struct MultiFlowApp: App {
     @AppStorage("colorSchemePreference") private var colorSchemePreference = 0
 
     init() {
-        FirebaseApp.configure()
+        _ = SupabaseManager.shared
     }
 
     var body: some Scene {

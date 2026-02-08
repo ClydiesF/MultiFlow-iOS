@@ -1,34 +1,28 @@
 import Foundation
 import AuthenticationServices
-import FirebaseAuth
 import Combine
 
 @MainActor
 final class AuthViewModel: ObservableObject {
-    @Published var user: User?
+    @Published var user: AppUser?
     @Published var authError: String?
     @Published var didCreateAccount = false
 
-    private var handle: AuthStateDidChangeListenerHandle?
     private var currentNonce: String?
+    private let authService: AuthServiceProtocol
 
-    init() {
-        handle = Auth.auth().addStateDidChangeListener { [weak self] _, user in
-            self?.user = user
-        }
-    }
-
-    deinit {
-        
-        if let handle {
-            Auth.auth().removeStateDidChangeListener(handle)
+    init(authService: AuthServiceProtocol? = nil) {
+        self.authService = authService ?? SupabaseAuthService(client: SupabaseManager.shared.client)
+        Task {
+            await self.authService.restoreSession()
+            self.user = self.authService.currentUser
         }
     }
 
     func signUp(email: String, password: String) async {
         authError = nil
         do {
-            _ = try await Auth.auth().createUser(withEmail: email, password: password)
+            user = try await authService.signUp(email: email, password: password)
             didCreateAccount = true
         } catch {
             authError = error.localizedDescription
@@ -38,7 +32,8 @@ final class AuthViewModel: ObservableObject {
     func signIn(email: String, password: String) async {
         authError = nil
         do {
-            _ = try await Auth.auth().signIn(withEmail: email, password: password)
+            user = try await authService.signIn(email: email, password: password)
+            didCreateAccount = false
         } catch {
             authError = error.localizedDescription
         }
@@ -46,10 +41,13 @@ final class AuthViewModel: ObservableObject {
 
     func signOut() {
         authError = nil
-        do {
-            try Auth.auth().signOut()
-        } catch {
-            authError = error.localizedDescription
+        Task {
+            do {
+                try await authService.signOut()
+                user = nil
+            } catch {
+                authError = error.localizedDescription
+            }
         }
     }
 
@@ -80,14 +78,8 @@ final class AuthViewModel: ObservableObject {
                 return
             }
 
-            let firebaseCredential = OAuthProvider.appleCredential(
-                withIDToken: tokenString,
-                rawNonce: nonce,
-                fullName: credential.fullName
-            )
-
             do {
-                _ = try await Auth.auth().signIn(with: firebaseCredential)
+                user = try await authService.signInWithApple(idToken: tokenString, nonce: nonce)
                 didCreateAccount = true
             } catch {
                 authError = error.localizedDescription
@@ -98,4 +90,3 @@ final class AuthViewModel: ObservableObject {
         }
     }
 }
-
