@@ -24,6 +24,7 @@ struct Property: Identifiable, Codable, Hashable {
     var marginalTaxRate: Double?
     var landValuePercent: Double?
     var gradeProfileId: String?
+    var suggestedOfferPrice: Double?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -48,6 +49,7 @@ struct Property: Identifiable, Codable, Hashable {
         case marginalTaxRate = "marginal_tax_rate"
         case landValuePercent = "land_value_percent"
         case gradeProfileId = "grade_profile_id"
+        case suggestedOfferPrice = "suggested_offer_price"
     }
 
     init(
@@ -73,7 +75,8 @@ struct Property: Identifiable, Codable, Hashable {
         appreciationRate: Double? = nil,
         marginalTaxRate: Double? = nil,
         landValuePercent: Double? = nil,
-        gradeProfileId: String? = nil
+        gradeProfileId: String? = nil,
+        suggestedOfferPrice: Double? = nil
     ) {
         self.id = id
         self.userId = userId
@@ -98,5 +101,6 @@ struct Property: Identifiable, Codable, Hashable {
         self.marginalTaxRate = marginalTaxRate
         self.landValuePercent = landValuePercent
         self.gradeProfileId = gradeProfileId
+        self.suggestedOfferPrice = suggestedOfferPrice
     }
 }

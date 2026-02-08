@@ -117,6 +117,7 @@ private struct PropertyDBRow: Codable {
     let marginalTaxRate: Double?
     let landValuePercent: Double?
     let gradeProfileId: String?
+    let suggestedOfferPrice: Double?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -141,6 +142,7 @@ private struct PropertyDBRow: Codable {
         case marginalTaxRate = "marginal_tax_rate"
         case landValuePercent = "land_value_percent"
         case gradeProfileId = "grade_profile_id"
+        case suggestedOfferPrice = "suggested_offer_price"
     }
 
     init(model: Property, userId: String) {
@@ -166,6 +168,7 @@ private struct PropertyDBRow: Codable {
         self.marginalTaxRate = model.marginalTaxRate
         self.landValuePercent = model.landValuePercent
         self.gradeProfileId = model.gradeProfileId
+        self.suggestedOfferPrice = model.suggestedOfferPrice
     }
 
     func toModel() -> Property {
@@ -192,7 +195,8 @@ private struct PropertyDBRow: Codable {
             appreciationRate: appreciationRate,
             marginalTaxRate: marginalTaxRate,
             landValuePercent: landValuePercent,
-            gradeProfileId: gradeProfileId
+            gradeProfileId: gradeProfileId,
+            suggestedOfferPrice: suggestedOfferPrice
         )
     }
 }
