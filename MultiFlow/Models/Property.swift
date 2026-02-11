@@ -25,6 +25,10 @@ struct Property: Identifiable, Codable, Hashable {
     var landValuePercent: Double?
     var gradeProfileId: String?
     var suggestedOfferPrice: Double?
+    var analysisCompleteness: String?
+    var missingAnalysisInputs: [String]?
+    var capexItems: [OperatingExpenseItem]?
+    var renoBudget: Double?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -50,6 +54,10 @@ struct Property: Identifiable, Codable, Hashable {
         case landValuePercent = "land_value_percent"
         case gradeProfileId = "grade_profile_id"
         case suggestedOfferPrice = "suggested_offer_price"
+        case analysisCompleteness = "analysis_completeness"
+        case missingAnalysisInputs = "missing_analysis_inputs"
+        case capexItems = "capex_items"
+        case renoBudget = "reno_budget"
     }
 
     init(
@@ -76,7 +84,11 @@ struct Property: Identifiable, Codable, Hashable {
         marginalTaxRate: Double? = nil,
         landValuePercent: Double? = nil,
         gradeProfileId: String? = nil,
-        suggestedOfferPrice: Double? = nil
+        suggestedOfferPrice: Double? = nil,
+        analysisCompleteness: String? = nil,
+        missingAnalysisInputs: [String]? = nil,
+        capexItems: [OperatingExpenseItem]? = nil,
+        renoBudget: Double? = nil
     ) {
         self.id = id
         self.userId = userId
@@ -102,5 +114,22 @@ struct Property: Identifiable, Codable, Hashable {
         self.landValuePercent = landValuePercent
         self.gradeProfileId = gradeProfileId
         self.suggestedOfferPrice = suggestedOfferPrice
+        self.analysisCompleteness = analysisCompleteness
+        self.missingAnalysisInputs = missingAnalysisInputs
+        self.capexItems = capexItems
+        self.renoBudget = renoBudget
+    }
+}
+
+extension Property {
+    enum AnalysisCompletenessState: String {
+        case provisional
+        case coreComplete = "core_complete"
+        case fullComplete = "full_complete"
+    }
+
+    var isProvisionalEstimate: Bool {
+        analysisCompleteness == AnalysisCompletenessState.provisional.rawValue
+        || !(missingAnalysisInputs ?? []).isEmpty
     }
 }

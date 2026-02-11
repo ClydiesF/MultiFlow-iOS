@@ -72,7 +72,9 @@ struct PortfolioView: View {
                 Image(systemName: "plus")
             }
         }
-        .sheet(isPresented: $showingAdd) {
+        .sheet(isPresented: $showingAdd, onDismiss: {
+            propertyStore.listen()
+        }) {
             AddPropertySheet(didAddProperty: $showToast)
                 .environmentObject(propertyStore)
                 .environmentObject(gradeProfileStore)

@@ -106,6 +106,12 @@ final class GradeProfileStore: ObservableObject {
     }
 
     private var currentUserId: String? {
-        SupabaseManager.shared.client.auth.currentUser?.id.uuidString
+        if let user = SupabaseManager.shared.client.auth.currentUser {
+            return user.id.uuidString
+        }
+        if let sessionUser = SupabaseManager.shared.client.auth.currentSession?.user {
+            return sessionUser.id.uuidString
+        }
+        return nil
     }
 }

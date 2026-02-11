@@ -118,6 +118,10 @@ private struct PropertyDBRow: Codable {
     let landValuePercent: Double?
     let gradeProfileId: String?
     let suggestedOfferPrice: Double?
+    let analysisCompleteness: String?
+    let missingAnalysisInputs: [String]?
+    let capexItems: [OperatingExpenseItem]?
+    let renoBudget: Double?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -143,6 +147,10 @@ private struct PropertyDBRow: Codable {
         case landValuePercent = "land_value_percent"
         case gradeProfileId = "grade_profile_id"
         case suggestedOfferPrice = "suggested_offer_price"
+        case analysisCompleteness = "analysis_completeness"
+        case missingAnalysisInputs = "missing_analysis_inputs"
+        case capexItems = "capex_items"
+        case renoBudget = "reno_budget"
     }
 
     init(model: Property, userId: String) {
@@ -169,6 +177,10 @@ private struct PropertyDBRow: Codable {
         self.landValuePercent = model.landValuePercent
         self.gradeProfileId = model.gradeProfileId
         self.suggestedOfferPrice = model.suggestedOfferPrice
+        self.analysisCompleteness = model.analysisCompleteness
+        self.missingAnalysisInputs = model.missingAnalysisInputs
+        self.capexItems = model.capexItems
+        self.renoBudget = model.renoBudget
     }
 
     func toModel() -> Property {
@@ -196,7 +208,11 @@ private struct PropertyDBRow: Codable {
             marginalTaxRate: marginalTaxRate,
             landValuePercent: landValuePercent,
             gradeProfileId: gradeProfileId,
-            suggestedOfferPrice: suggestedOfferPrice
+            suggestedOfferPrice: suggestedOfferPrice,
+            analysisCompleteness: analysisCompleteness,
+            missingAnalysisInputs: missingAnalysisInputs,
+            capexItems: capexItems,
+            renoBudget: renoBudget
         )
     }
 }

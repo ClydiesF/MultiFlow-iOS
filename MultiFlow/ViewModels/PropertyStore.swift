@@ -49,6 +49,16 @@ final class PropertyStore: ObservableObject {
     func addProperty(_ property: Property) async throws {
         guard let userId = currentUserId else { throw BackendError.notAuthenticated }
         try await repository.addProperty(property, userId: userId)
+
+        // Optimistically surface the newly added property so Portfolio updates immediately.
+        var optimistic = property
+        optimistic.userId = userId
+        if optimistic.id == nil {
+            optimistic.id = UUID().uuidString
+        }
+        properties.insert(optimistic, at: 0)
+
+        await reload()
     }
 
     func updateProperty(_ property: Property) async throws {
@@ -91,7 +101,13 @@ final class PropertyStore: ObservableObject {
     }
 
     private var currentUserId: String? {
-        SupabaseManager.shared.client.auth.currentUser?.id.uuidString
+        if let user = SupabaseManager.shared.client.auth.currentUser {
+            return user.id.uuidString
+        }
+        if let sessionUser = SupabaseManager.shared.client.auth.currentSession?.user {
+            return sessionUser.id.uuidString
+        }
+        return nil
     }
 }
 

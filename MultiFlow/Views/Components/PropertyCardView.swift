@@ -1,7 +1,5 @@
 import SwiftUI
 import UIKit
-import CoreMotion
-import Combine
 
 struct PropertyCardView: View {
     let property: Property
@@ -9,7 +7,6 @@ struct PropertyCardView: View {
 
     @State private var isFlipped = false
     @State private var targetDCR = 1.25
-    @StateObject private var motion = CardMotionManager()
 
     private let backColor = Color(red: 18.0 / 255.0, green: 18.0 / 255.0, blue: 18.0 / 255.0)
     private let flipAnimation = Animation.spring(response: 0.55, dampingFraction: 0.82, blendDuration: 0.15)
@@ -35,23 +32,6 @@ struct PropertyCardView: View {
         .frame(maxWidth: .infinity)
         .frame(height: 325)
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.12),
-                            Color.white.opacity(0.85),
-                            Color.gray.opacity(0.55),
-                            Color.white.opacity(0.12)
-                        ],
-                        startPoint: bezelGradientStart,
-                        endPoint: bezelGradientEnd
-                    ),
-                    lineWidth: 1.5
-                )
-                .opacity(0.16)
-        }
         .onTapGesture {
             withAnimation(flipAnimation) {
                 isFlipped.toggle()
@@ -63,12 +43,6 @@ struct PropertyCardView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.40) {
                 generator.impactOccurred(intensity: 0.9)
             }
-        }
-        .onAppear {
-            motion.start()
-        }
-        .onDisappear {
-            motion.stop()
         }
     }
 
@@ -97,6 +71,20 @@ struct PropertyCardView: View {
 
                 gradeBadge
                     .padding(14)
+            }
+            .overlay(alignment: .topLeading) {
+                if property.isProvisionalEstimate {
+                    Text("Estimate")
+                        .font(.system(.caption2, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.richBlack)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.primaryYellow.opacity(0.88))
+                        )
+                        .padding(14)
+                }
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -323,63 +311,6 @@ struct PropertyCardView: View {
         Formatters.currency.string(from: NSNumber(value: value)) ?? "$0"
     }
 
-    private var bezelGradientStart: UnitPoint {
-        let roll = motion.roll.clamped(to: -1...1)
-        let pitch = motion.pitch.clamped(to: -1...1)
-        return UnitPoint(
-            x: 0.15 + (roll * 0.18),
-            y: 0.10 - (pitch * 0.18)
-        )
-    }
-
-    private var bezelGradientEnd: UnitPoint {
-        let roll = motion.roll.clamped(to: -1...1)
-        let pitch = motion.pitch.clamped(to: -1...1)
-        return UnitPoint(
-            x: 0.85 - (roll * 0.18),
-            y: 0.90 + (pitch * 0.18)
-        )
-    }
-}
-
-@MainActor
-private final class CardMotionManager: ObservableObject {
-    @Published var roll: CGFloat = 0
-    @Published var pitch: CGFloat = 0
-
-    private let manager = CMMotionManager()
-    private let queue = OperationQueue()
-
-    func start() {
-        guard manager.isDeviceMotionAvailable else { return }
-        guard !manager.isDeviceMotionActive else { return }
-
-        manager.deviceMotionUpdateInterval = 1.0 / 30.0
-        queue.qualityOfService = .userInteractive
-
-        manager.startDeviceMotionUpdates(to: queue) { [weak self] motion, _ in
-            guard let self, let motion else { return }
-            let normalizedRoll = CGFloat(motion.attitude.roll / 0.9)
-            let normalizedPitch = CGFloat(motion.attitude.pitch / 0.9)
-            DispatchQueue.main.async {
-                withAnimation(.easeOut(duration: 0.12)) {
-                    self.roll = normalizedRoll
-                    self.pitch = normalizedPitch
-                }
-            }
-        }
-    }
-
-    func stop() {
-        guard manager.isDeviceMotionActive else { return }
-        manager.stopDeviceMotionUpdates()
-    }
-}
-
-private extension CGFloat {
-    func clamped(to range: ClosedRange<CGFloat>) -> CGFloat {
-        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
-    }
 }
 
 #Preview {

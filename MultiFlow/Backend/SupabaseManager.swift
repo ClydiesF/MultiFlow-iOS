@@ -10,7 +10,13 @@ final class SupabaseManager {
         let config = BackendConfig.load()
         client = SupabaseClient(
             supabaseURL: config.supabaseURL,
-            supabaseKey: config.supabaseAnonKey
+            supabaseKey: config.supabaseAnonKey,
+            options: SupabaseClientOptions(
+                auth: .init(
+                    autoRefreshToken: true,
+                    emitLocalSessionAsInitialSession: true
+                )
+            )
         )
     }
 }

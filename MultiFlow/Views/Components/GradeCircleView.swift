@@ -5,13 +5,13 @@ struct GradeCircleView: View {
     let grade: Grade
 
     @State private var didAppear = false
-    @State private var currentStep = 0
+    @State private var currentStep: CGFloat = 0
     @State private var isSpinning = false
+    @State private var hasRevealedOnce = false
 
     private let size: CGFloat = 60
     private let gold = Color(red: 1.0, green: 215.0 / 255.0, blue: 0.0)
     private let grades = ["F", "E", "D", "C", "B", "A"]
-    private let letterHeight: CGFloat = 30
 
     var body: some View {
         ZStack {
@@ -40,7 +40,7 @@ struct GradeCircleView: View {
                 step: currentStep,
                 isSpinning: isSpinning,
                 gold: gold,
-                letterHeight: letterHeight
+                dialSize: size
             )
         }
         .frame(width: size, height: size)
@@ -55,7 +55,11 @@ struct GradeCircleView: View {
             withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
                 didAppear = true
             }
-            revealGrade(finalGrade: displayGrade)
+            if !hasRevealedOnce {
+                hasRevealedOnce = true
+                currentStep = CGFloat(gradeIndex(for: displayGrade))
+                revealGrade(finalGrade: displayGrade)
+            }
         }
         .onChange(of: displayGrade) { _, newValue in
             revealGrade(finalGrade: newValue)
@@ -64,12 +68,15 @@ struct GradeCircleView: View {
 
     private func revealGrade(finalGrade: String) {
         guard let targetIndex = grades.firstIndex(of: finalGrade) else { return }
+        if !isSpinning && Int(currentStep.rounded()) % grades.count == targetIndex {
+            currentStep = CGFloat(targetIndex)
+            return
+        }
 
-        let baseIndex = currentStep % grades.count
-        let normalizedCurrent = grades.indices.contains(baseIndex) ? baseIndex : 0
+        let normalizedCurrent = Int(currentStep.rounded()) % grades.count
         let cycles = 2
         let finalStep = cycles * grades.count + targetIndex
-        let totalSteps = max(finalStep - normalizedCurrent, 0)
+        let totalSteps = max(finalStep - normalizedCurrent, 1)
 
         let selectionGenerator = UISelectionFeedbackGenerator()
         selectionGenerator.prepare()
@@ -88,14 +95,20 @@ struct GradeCircleView: View {
         }
 
         withAnimation(.spring(response: 0.6, dampingFraction: 0.7, blendDuration: 0)) {
-            currentStep = finalStep
+            currentStep = CGFloat(finalStep)
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.58) {
             isSpinning = false
             heavyGenerator.impactOccurred(intensity: 0.95)
-            currentStep = targetIndex
+            withTransaction(Transaction(animation: .none)) {
+                currentStep = CGFloat(targetIndex)
+            }
         }
+    }
+
+    private func gradeIndex(for letter: String) -> Int {
+        grades.firstIndex(of: letter) ?? 0
     }
 
     private var dialSequence: [String] {
@@ -114,25 +127,40 @@ struct GradeCircleView: View {
 
 private struct GradeDialView: View {
     let sequence: [String]
-    let step: Int
+    let step: CGFloat
     let isSpinning: Bool
     let gold: Color
-    let letterHeight: CGFloat
+    let dialSize: CGFloat
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(sequence.enumerated()), id: \.offset) { _, letter in
-                Text(letter)
-                    .font(.system(size: 27, weight: .heavy, design: .rounded))
-                    .foregroundStyle(gold)
-                    .frame(height: letterHeight)
-                    .frame(maxWidth: .infinity)
+        let snappedStep = isSpinning ? step : step.rounded()
+        let restingIndex = min(max(Int(snappedStep), 0), max(sequence.count - 1, 0))
+        let restingLetter = sequence.isEmpty ? "F" : sequence[restingIndex]
+
+        ZStack {
+            VStack(spacing: 0) {
+                ForEach(Array(sequence.enumerated()), id: \.offset) { _, letter in
+                    Text(letter)
+                        .font(.system(size: 30, weight: .heavy, design: .rounded))
+                        .foregroundStyle(gold)
+                        .lineLimit(1)
+                        .frame(width: dialSize, height: dialSize, alignment: .center)
+                }
             }
+            .offset(y: -(snappedStep * dialSize))
+            .blur(radius: isSpinning ? 2.5 : 0)
+            .opacity(isSpinning ? 1 : 0)
+            .frame(width: dialSize, height: dialSize, alignment: .center)
+            .clipped()
+
+            Text(restingLetter)
+                .font(.system(size: 30, weight: .heavy, design: .rounded))
+                .foregroundStyle(gold)
+                .lineLimit(1)
+                .frame(width: dialSize, height: dialSize, alignment: .center)
+                .opacity(isSpinning ? 0 : 1)
         }
-        .offset(y: -CGFloat(step) * letterHeight)
-        .blur(radius: isSpinning ? 3 : 0)
-        .frame(height: letterHeight)
-        .clipped()
+        .frame(width: dialSize, height: dialSize, alignment: .center)
     }
 }
 
