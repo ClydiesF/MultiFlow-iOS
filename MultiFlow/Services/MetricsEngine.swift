@@ -4,6 +4,7 @@ struct MetricsEngine {
     // Assumes a 30-year fixed loan term for amortization.
     static let defaultLoanTermYears: Double = 30
     static let operatingExpenseRate: Double = 0.35
+    static let defaultMonthlyRentPerUnitKey = "defaultMonthlyRentPerUnit"
 
     static func computeMetrics(
         purchasePrice: Double,
@@ -68,14 +69,8 @@ struct MetricsEngine {
             return nil
         }
 
-        let rentInputs = property.rentRoll.map {
-            RentUnitInput(
-                monthlyRent: String($0.monthlyRent),
-                unitType: $0.unitType,
-                bedrooms: String($0.bedrooms),
-                bathrooms: String($0.bathrooms)
-            )
-        }
+        let rentInputs = effectiveRentInputs(for: property)
+        guard !rentInputs.isEmpty else { return nil }
 
         let useStandard = property.useStandardOperatingExpense ?? true
         let expenseRate = (property.operatingExpenseRate ?? operatingExpenseRate) / 100.0
@@ -101,16 +96,44 @@ struct MetricsEngine {
         )
     }
 
+    private static func effectiveRentInputs(for property: Property) -> [RentUnitInput] {
+        let hasRealRentData = property.rentRoll.contains { $0.monthlyRent > 0 }
+        if hasRealRentData {
+            return property.rentRoll.map {
+                RentUnitInput(
+                    monthlyRent: String($0.monthlyRent),
+                    unitType: $0.unitType,
+                    bedrooms: String($0.bedrooms),
+                    bathrooms: String($0.bathrooms)
+                )
+            }
+        }
+
+        let fallbackRent = max(UserDefaults.standard.double(forKey: defaultMonthlyRentPerUnitKey), 0)
+        let safeFallbackRent = fallbackRent > 0 ? fallbackRent : 1_500
+        let unitCount = max(property.rentRoll.count, 0)
+        guard unitCount > 0 else { return [] }
+
+        return (0..<unitCount).map { _ in
+            RentUnitInput(
+                monthlyRent: String(safeFallbackRent),
+                unitType: "Unit",
+                bedrooms: "0",
+                bathrooms: "0"
+            )
+        }
+    }
+
     static func gradeFor(cashOnCash: Double, dcr: Double) -> Grade {
-        if cashOnCash > 0.10, dcr > 1.35 {
+        if cashOnCash >= 0.10, dcr >= 1.35 {
             return .a
         }
 
-        if cashOnCash >= 0.07, cashOnCash <= 0.10, dcr >= 1.25, dcr <= 1.35 {
+        if cashOnCash >= 0.07, dcr >= 1.25 {
             return .b
         }
 
-        if cashOnCash >= 0.04, cashOnCash < 0.07, dcr >= 1.15, dcr < 1.25 {
+        if cashOnCash >= 0.04, dcr >= 1.15 {
             return .c
         }
 

@@ -17,6 +17,7 @@ struct EvaluatorView: View {
     @State private var state = ""
     @State private var zipCode = ""
     @State private var imageURL = ""
+    @State private var imagePath: String?
     @State private var purchasePrice = ""
     @State private var downPaymentPercent = ""
     @State private var interestRate = ""
@@ -32,11 +33,10 @@ struct EvaluatorView: View {
     @State private var rentRoll: [RentUnitInput] = [
         RentUnitInput(monthlyRent: "", unitType: "1BR", bedrooms: "1", bathrooms: "1")
     ]
-    @State private var useStandardOperatingExpense = true
-    @State private var operatingExpenseRate = ""
-    @State private var operatingExpenses: [OperatingExpenseInput] = [
-        OperatingExpenseInput(name: "Repairs", annualAmount: "")
-    ]
+    @State private var expenseMode: ExpenseInputMode = .simple
+    @State private var simpleExpenseRate = ""
+    @State private var managementFee = ""
+    @State private var maintenanceReserves = ""
 
     @State private var shareURL: URL?
     @State private var showShare = false
@@ -114,8 +114,8 @@ struct EvaluatorView: View {
             }
         }
         .onAppear {
-            if operatingExpenseRate.isEmpty {
-                operatingExpenseRate = String(standardOperatingExpenseRate)
+            if simpleExpenseRate.isEmpty {
+                simpleExpenseRate = String(standardOperatingExpenseRate)
             }
 
             if appreciationRate.isEmpty {
@@ -335,70 +335,16 @@ struct EvaluatorView: View {
                 .font(.system(.title3, design: .rounded).weight(.semibold))
                 .foregroundStyle(Color.richBlack)
 
-            Toggle("Use standard expense rate", isOn: $useStandardOperatingExpense)
-                .toggleStyle(SwitchToggleStyle(tint: Color.primaryYellow))
-
-            if useStandardOperatingExpense {
-                LabeledTextField(title: "Standard Expense %", text: $operatingExpenseRate, keyboard: .decimalPad)
-                    .onChange(of: showSaveToast) { _, newValue in
-            if newValue {
-                Task {
-                    try? await Task.sleep(nanoseconds: 1_800_000_000)
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        showSaveToast = false
-                    }
-                }
-            }
-        }
-        .onAppear {
-                        if operatingExpenseRate.isEmpty {
-                            operatingExpenseRate = String(standardOperatingExpenseRate)
-                        }
-                    }
-                    .onChange(of: operatingExpenseRate) { _, newValue in
-                        operatingExpenseRate = InputFormatters.sanitizeDecimal(newValue)
-                    }
-                    .onSubmit {
-                        if let value = Double(operatingExpenseRate) {
-                            operatingExpenseRate = String(format: "%.2f", value)
-                        }
-                    }
-            } else {
-                ForEach($operatingExpenses) { $expense in
-                    VStack(spacing: 10) {
-                        LabeledTextField(title: "Expense Name", text: $expense.name, keyboard: .default)
-                        LabeledTextField(title: "Annual Amount", text: $expense.annualAmount, keyboard: .decimalPad)
-                            .onChange(of: expense.annualAmount) { _, newValue in
-                                expense.annualAmount = InputFormatters.sanitizeDecimal(newValue)
-                            }
-                            .onSubmit {
-                                if let value = Double(expense.annualAmount) {
-                                    expense.annualAmount = Formatters.currency.string(from: NSNumber(value: value)) ?? expense.annualAmount
-                                }
-                            }
-                        if operatingExpenses.count > 1 {
-                            Button("Remove Expense") {
-                                operatingExpenses.removeAll { $0.id == expense.id }
-                            }
-                            .font(.system(.footnote, design: .rounded).weight(.semibold))
-                            .foregroundStyle(.red)
-                        }
-                    }
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.softGray)
-                    )
-                }
-
-                Button("Add Expense") {
-                    operatingExpenses.append(OperatingExpenseInput(name: "", annualAmount: ""))
-                }
-                .font(.system(.footnote, design: .rounded).weight(.semibold))
-
-                let total = operatingExpenses.compactMap { Double($0.annualAmount) }.reduce(0, +)
-                MetricRow(title: "Total Operating Expenses", value: Formatters.currency.string(from: NSNumber(value: total)) ?? "$0")
-            }
+            ExpenseModuleView(
+                module: expenseModule,
+                annualCashFlow: computedMetrics?.annualCashFlow,
+                mode: $expenseMode,
+                simpleRate: $simpleExpenseRate,
+                annualTaxes: $annualTaxes,
+                annualInsurance: $annualInsurance,
+                managementFee: $managementFee,
+                maintenanceReserves: $maintenanceReserves
+            )
         }
         .cardStyle()
     }
@@ -554,8 +500,6 @@ struct EvaluatorView: View {
             }
 
             if let metrics = computedMetrics {
-                let totalOperatingExpenses = operatingExpenses.compactMap { Double($0.annualAmount) }.reduce(0, +)
-
                 let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
                 LazyVGrid(columns: columns, spacing: 14) {
                     MetricTile(title: "NOI", value: Formatters.currency.string(from: NSNumber(value: metrics.netOperatingIncome)) ?? "$0")
@@ -564,10 +508,10 @@ struct EvaluatorView: View {
                     MetricTile(title: "DCR", value: String(format: "%.2f", metrics.debtCoverageRatio))
                 }
 
-                if !useStandardOperatingExpense {
+                if expenseMode == .detailed, let module = expenseModule {
                     MetricRow(
                         title: "Total Operating Expenses",
-                        value: Formatters.currency.string(from: NSNumber(value: totalOperatingExpenses)) ?? "$0"
+                        value: Formatters.currency.string(from: NSNumber(value: module.totalOperatingExpenses)) ?? "$0"
                     )
                 }
             } else {
@@ -675,25 +619,78 @@ struct EvaluatorView: View {
         guard let purchasePriceValue = InputFormatters.parseCurrency(purchasePrice),
               let downPaymentValue = Double(downPaymentPercent),
               let interestValue = Double(interestRate),
-              let taxesValue = InputFormatters.parseCurrency(annualTaxes),
-              let insuranceValue = InputFormatters.parseCurrency(annualInsurance) else {
+              let module = expenseModule else {
             return nil
         }
 
-        let rate = Double(operatingExpenseRate).map { $0 / 100.0 } ?? (standardOperatingExpenseRate / 100.0)
+        let debtService = MetricsEngine.mortgageBreakdown(
+            purchasePrice: purchasePriceValue,
+            downPaymentPercent: downPaymentValue,
+            interestRate: interestValue,
+            loanTermYears: Double(loanTermYears),
+            annualTaxes: module.effectiveAnnualTaxes,
+            annualInsurance: module.effectiveAnnualInsurance
+        ).map { $0.annualPrincipal + $0.annualInterest } ?? 0
+
+        if expenseMode == .detailed {
+            let netOperatingIncome = module.netOperatingIncome
+            let annualCashFlow = netOperatingIncome - debtService
+            let downPayment = max(purchasePriceValue * (downPaymentValue / 100.0), 0.0001)
+            let capRate = purchasePriceValue > 0 ? netOperatingIncome / purchasePriceValue : 0
+            let cashOnCash = annualCashFlow / downPayment
+            let dcr = debtService > 0 ? netOperatingIncome / debtService : 0
+
+            return DealMetrics(
+                totalAnnualRent: module.grossAnnualRent,
+                netOperatingIncome: netOperatingIncome,
+                capRate: capRate,
+                annualDebtService: debtService,
+                annualCashFlow: annualCashFlow,
+                cashOnCash: cashOnCash,
+                debtCoverageRatio: dcr,
+                grade: MetricsEngine.gradeFor(cashOnCash: cashOnCash, dcr: dcr)
+            )
+        }
 
         return MetricsEngine.computeMetrics(
             purchasePrice: purchasePriceValue,
             downPaymentPercent: downPaymentValue,
             interestRate: interestValue,
-            annualTaxes: taxesValue,
-            annualInsurance: insuranceValue,
+            annualTaxes: module.effectiveAnnualTaxes,
+            annualInsurance: module.effectiveAnnualInsurance,
             loanTermYears: Double(loanTermYears),
             rentRoll: rentRoll,
-            useStandardOperatingExpense: useStandardOperatingExpense,
-            operatingExpenseRateOverride: rate,
-            operatingExpenses: operatingExpenses
+            useStandardOperatingExpense: true,
+            operatingExpenseRateOverride: operatingExpenseRateValue / 100.0,
+            operatingExpenses: []
         )
+    }
+
+    private var expenseModule: MFMetricEngine.ExpenseModule? {
+        guard let purchasePriceValue = InputFormatters.parseCurrency(purchasePrice) else { return nil }
+        let grossAnnualRent = MFMetricEngine.grossAnnualRent(from: rentRoll)
+
+        return MFMetricEngine.ExpenseModule(
+            purchasePrice: purchasePriceValue,
+            unitCount: max(rentRoll.count, 1),
+            grossAnnualRent: grossAnnualRent,
+            annualTaxes: InputFormatters.parseCurrency(annualTaxes),
+            annualInsurance: InputFormatters.parseCurrency(annualInsurance),
+            mgmtFee: InputFormatters.parseCurrency(managementFee),
+            maintenanceReserves: InputFormatters.parseCurrency(maintenanceReserves)
+        )
+    }
+
+    private var operatingExpenseRateValue: Double {
+        Double(simpleExpenseRate) ?? standardOperatingExpenseRate
+    }
+
+    private var detailedOperatingExpenses: [OperatingExpenseItem] {
+        guard let module = expenseModule else { return [] }
+        return [
+            OperatingExpenseItem(name: "Management Fee", annualAmount: module.effectiveManagementFee),
+            OperatingExpenseItem(name: "Maintenance Reserves", annualAmount: module.effectiveMaintenanceReserves)
+        ]
     }
 
     private var evaluatorGrade: Grade? {
@@ -715,7 +712,7 @@ struct EvaluatorView: View {
     private var pillarEvaluation: PillarEvaluation? {
         guard let metrics = computedMetrics,
               let breakdown = mortgageBreakdown,
-              let purchasePriceValue = Double(purchasePrice) else {
+              let purchasePriceValue = InputFormatters.parseCurrency(purchasePrice) else {
             return nil
         }
 
@@ -755,16 +752,15 @@ struct EvaluatorView: View {
         guard let purchasePriceValue = InputFormatters.parseCurrency(purchasePrice),
               let downPaymentValue = Double(downPaymentPercent),
               let interestValue = Double(interestRate),
-              let taxesValue = InputFormatters.parseCurrency(annualTaxes),
-              let insuranceValue = InputFormatters.parseCurrency(annualInsurance) else { return nil }
+              let module = expenseModule else { return nil }
 
         return MetricsEngine.mortgageBreakdown(
             purchasePrice: purchasePriceValue,
             downPaymentPercent: downPaymentValue,
             interestRate: interestValue,
             loanTermYears: Double(loanTermYears),
-            annualTaxes: taxesValue,
-            annualInsurance: insuranceValue
+            annualTaxes: module.effectiveAnnualTaxes,
+            annualInsurance: module.effectiveAnnualInsurance
         )
     }
 
@@ -780,11 +776,16 @@ struct EvaluatorView: View {
         state = ""
         zipCode = ""
         imageURL = ""
+        imagePath = nil
         purchasePrice = ""
         downPaymentPercent = ""
         interestRate = ""
         annualTaxes = ""
         annualInsurance = ""
+        expenseMode = .simple
+        simpleExpenseRate = String(standardOperatingExpenseRate)
+        managementFee = ""
+        maintenanceReserves = ""
         loanTermYears = 30
         rentRoll = [RentUnitInput(monthlyRent: "", unitType: "1BR", bedrooms: "1", bathrooms: "1")]
         isSearching = false
@@ -794,15 +795,10 @@ struct EvaluatorView: View {
     private func uploadImage(_ image: UIImage) async {
         await MainActor.run { self.isUploadingImage = true; self.imageError = nil }
         do {
-            // Simulate an upload by saving to a temporary file and using its URL
-            guard let data = image.jpegData(compressionQuality: 0.8) else {
-                throw NSError(domain: "Upload", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to prepare image data."])
-            }
-            let tmpDir = FileManager.default.temporaryDirectory
-            let fileURL = tmpDir.appendingPathComponent("evaluator_\(UUID().uuidString).jpg")
-            try data.write(to: fileURL)
+            let uploaded = try await ImageUploadService.uploadPropertyImage(image)
             await MainActor.run {
-                self.imageURL = fileURL.absoluteString
+                self.imagePath = uploaded.path
+                self.imageURL = uploaded.signedURL.absoluteString
             }
         } catch {
             await MainActor.run {
@@ -815,9 +811,8 @@ struct EvaluatorView: View {
     private func exportPDF() async {
         errorMessage = nil
         guard let metrics = computedMetrics,
-              let purchasePriceValue = Double(purchasePrice),
-              let taxesValue = InputFormatters.parseCurrency(annualTaxes),
-              let insuranceValue = InputFormatters.parseCurrency(annualInsurance) else {
+              let purchasePriceValue = InputFormatters.parseCurrency(purchasePrice),
+              let module = expenseModule else {
             errorMessage = "Complete the inputs before exporting."
             return
         }
@@ -840,17 +835,15 @@ struct EvaluatorView: View {
             city: city.isEmpty ? nil : city,
             state: state.isEmpty ? nil : state,
             zipCode: zipCode.isEmpty ? nil : zipCode,
+            imagePath: imagePath,
             imageURL: imageURL,
             purchasePrice: purchasePriceValue,
             rentRoll: rentUnits,
-            useStandardOperatingExpense: useStandardOperatingExpense,
-            operatingExpenseRate: Double(operatingExpenseRate).map { $0 } ?? standardOperatingExpenseRate,
-            operatingExpenses: operatingExpenses.compactMap { item in
-                guard let amount = InputFormatters.parseCurrency(item.annualAmount) else { return nil }
-                return OperatingExpenseItem(name: item.name, annualAmount: amount)
-            },
-            annualTaxes: taxesValue,
-            annualInsurance: insuranceValue,
+            useStandardOperatingExpense: expenseMode == .simple,
+            operatingExpenseRate: operatingExpenseRateValue,
+            operatingExpenses: expenseMode == .detailed ? detailedOperatingExpenses : [],
+            annualTaxes: module.effectiveAnnualTaxes,
+            annualInsurance: module.effectiveAnnualInsurance,
             loanTermYears: loanTermYears,
             downPaymentPercent: Double(downPaymentPercent),
             interestRate: Double(interestRate),
@@ -882,8 +875,7 @@ struct EvaluatorView: View {
     private func saveProperty() async {
         errorMessage = nil
         guard let purchasePriceValue = InputFormatters.parseCurrency(purchasePrice),
-              let taxesValue = InputFormatters.parseCurrency(annualTaxes),
-              let insuranceValue = InputFormatters.parseCurrency(annualInsurance) else {
+              let module = expenseModule else {
             errorMessage = "Enter a valid purchase price."
             return
         }
@@ -906,17 +898,15 @@ struct EvaluatorView: View {
             city: city.isEmpty ? nil : city,
             state: state.isEmpty ? nil : state,
             zipCode: zipCode.isEmpty ? nil : zipCode,
+            imagePath: imagePath,
             imageURL: imageURL,
             purchasePrice: purchasePriceValue,
             rentRoll: rentUnits,
-            useStandardOperatingExpense: useStandardOperatingExpense,
-            operatingExpenseRate: Double(operatingExpenseRate).map { $0 } ?? standardOperatingExpenseRate,
-            operatingExpenses: operatingExpenses.compactMap { item in
-                guard let amount = InputFormatters.parseCurrency(item.annualAmount) else { return nil }
-                return OperatingExpenseItem(name: item.name, annualAmount: amount)
-            },
-            annualTaxes: taxesValue,
-            annualInsurance: insuranceValue,
+            useStandardOperatingExpense: expenseMode == .simple,
+            operatingExpenseRate: operatingExpenseRateValue,
+            operatingExpenses: expenseMode == .detailed ? detailedOperatingExpenses : [],
+            annualTaxes: module.effectiveAnnualTaxes,
+            annualInsurance: module.effectiveAnnualInsurance,
             loanTermYears: loanTermYears,
             downPaymentPercent: Double(downPaymentPercent),
             interestRate: Double(interestRate),
@@ -1064,4 +1054,3 @@ struct MetricTile: View {
             .environmentObject(GradeProfileStore())
     }
 }
-

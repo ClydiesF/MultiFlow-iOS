@@ -18,14 +18,14 @@ Language: Swift 6 / SwiftUI
 
 Frameworks: Swift Charts (Data Viz), Combine (Reactive Logic)
 
-Database & Backend: Firebase (Auth, Firestore, Cloud Storage)
+Database & Backend: Supabase (Auth, Postgres, Realtime, Storage)
 
 Architecture: MVVM (Model-View-ViewModel) with a dedicated MetricEngine for financial logic.
 
 UI/UX: Custom "Clean Canvas" design system utilizing a high-contrast Yellow, Black, and Grey palette.
 
 📂 ## Repository Structure
-/Models: SwiftData/Firebase entities for Properties, Units, and Portfolios.
+/Models: Codable entities for properties, units, and portfolio analytics.
 
 /Views: Reusable SwiftUI components (MetricCards, FloatingTabBar, PropertyBadges).
 

@@ -1,5 +1,4 @@
 import Foundation
-import FirebaseFirestore
 
 struct OperatingExpenseItem: Identifiable, Codable, Hashable {
     var id: String = UUID().uuidString
@@ -8,8 +7,8 @@ struct OperatingExpenseItem: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id
-        case name = "Name"
-        case annualAmount = "AnnualAmount"
+        case name
+        case annualAmount = "annual_amount"
     }
 
     init(id: String = UUID().uuidString, name: String, annualAmount: Double) {

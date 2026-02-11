@@ -1,7 +1,5 @@
 import SwiftUI
-import MapKit
-import PhotosUI
-import Combine
+import UIKit
 
 struct AddPropertySheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -9,614 +7,882 @@ struct AddPropertySheet: View {
     @EnvironmentObject var propertyStore: PropertyStore
     @EnvironmentObject var gradeProfileStore: GradeProfileStore
     @AppStorage("standardOperatingExpenseRate") private var standardOperatingExpenseRate = 35.0
-    
-    @State private var address = ""
-    @State private var city = ""
-    @State private var state = ""
-    @State private var zipCode = ""
-    @State private var imageURL = ""
-    @State private var purchasePrice = ""
-    @State private var useStandardOperatingExpense = true
-    @State private var operatingExpenseRate = ""
-    @State private var operatingExpenses: [OperatingExpenseInput] = [
-        OperatingExpenseInput(name: "Repairs", annualAmount: "")
-    ]
-    @State private var downPaymentPercent = ""
-    @State private var interestRate = ""
-    @State private var annualTaxes = ""
-    @State private var annualInsurance = ""
-    @State private var loanTermYears = 30
-    @State private var rentRoll: [RentUnitInput] = [
-        RentUnitInput(monthlyRent: "", unitType: "1BR", bedrooms: "1", bathrooms: "1")
-    ]
-    @State private var errorMessage: String?
+    @AppStorage("cashflowBreakEvenThreshold") private var cashflowBreakEvenThreshold = 500.0
+    @AppStorage("defaultMonthlyRentPerUnit") private var defaultMonthlyRentPerUnit = 1500.0
+
+    @StateObject private var viewModel = AnalysisWizardViewModel()
     @State private var isSaving = false
-    @StateObject private var searchService = LocationSearchService()
-    @State private var isSearching = false
-    @State private var selectedPhotoItem: PhotosPickerItem?
-    @State private var showCamera = false
-    @State private var isUploadingImage = false
-    @State private var imageError: String?
-    @State private var selectedProfileId: String?
-    
+    @State private var errorMessage: String?
+    @State private var missingFields = Set<AnalysisWizardField>()
+    @State private var shakeTick = 0
+    @State private var expenseMode: ExpenseInputMode = .simple
+    @State private var simpleExpenseRate = ""
+    @State private var annualInsuranceInput = ""
+    @State private var managementFee = ""
+    @State private var maintenanceReserves = ""
+
+    @FocusState private var focusedField: AnalysisWizardField?
+
+    private let canvasGrey = Color.canvasWhite
+    private let ink = Color.richBlack
+    private let buttonBlack = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+        ? UIColor(white: 0.16, alpha: 1.0)
+        : UIColor(red: 14.0 / 255.0, green: 14.0 / 255.0, blue: 16.0 / 255.0, alpha: 1.0)
+    })
+    private let propertyTypeColumns = [
+        GridItem(.flexible(), spacing: 12),
+        GridItem(.flexible(), spacing: 12)
+    ]
+
     var body: some View {
         NavigationStack {
-            ScrollView {
-                formBody
+            ZStack {
+                canvasGrey.ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    header
+
+                    GeometryReader { geo in
+                        HStack(spacing: 0) {
+                            stepOne
+                                .frame(width: geo.size.width)
+                            stepTwo
+                                .frame(width: geo.size.width)
+                            stepThree
+                                .frame(width: geo.size.width)
+                        }
+                        .offset(x: -CGFloat(viewModel.stepIndex) * geo.size.width)
+                        .animation(.easeInOut(duration: 0.3), value: viewModel.stepIndex)
+                    }
+
+                    footer
+                }
             }
-            .navigationTitle("Add Property")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") { dismiss() }
+                        .foregroundStyle(ink)
                 }
             }
         }
         .onAppear {
-            if operatingExpenseRate.isEmpty {
-                operatingExpenseRate = String(standardOperatingExpenseRate)
+            if simpleExpenseRate.isEmpty {
+                simpleExpenseRate = String(standardOperatingExpenseRate)
             }
-            if selectedProfileId == nil {
-                selectedProfileId = gradeProfileStore.defaultProfileId
-            }
+            focusFirstEmptyFieldForCurrentStep()
         }
-        .onChange(of: selectedPhotoItem) { _, newItem in
-            guard let newItem else { return }
-            Task {
-                if let data = try? await newItem.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data) {
-                    await uploadImage(image)
+        .onChange(of: viewModel.stepIndex) { _, _ in
+            focusFirstEmptyFieldForCurrentStep()
+        }
+        .onChange(of: viewModel.purchasePrice) { _, _ in
+            autoPopulateDallasTaxesIfNeeded()
+        }
+        .onChange(of: viewModel.city) { _, _ in
+            autoPopulateDallasTaxesIfNeeded()
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add Property")
+                .font(.system(size: 32, weight: .bold, design: .rounded))
+                .foregroundStyle(ink)
+
+            HStack(spacing: 6) {
+                ForEach(0..<3, id: \.self) { index in
+                    Capsule()
+                        .fill(index == viewModel.stepIndex ? Color.primaryYellow : ink.opacity(0.15))
+                        .frame(height: 6)
                 }
             }
         }
-        .sheet(isPresented: $showCamera) {
-            CameraPicker { image in
-                Task { await uploadImage(image) }
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+        .padding(.bottom, 16)
+    }
+
+    private var stepOne: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Step 1 · Acquisition")
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .foregroundStyle(ink)
+
+                wizardField(
+                    title: "Address",
+                    placeholder: "123 Main St",
+                    text: $viewModel.address,
+                    keyboard: .default,
+                    field: .address
+                )
+
+                locationRow
+
+                wizardField(
+                    title: "Purchase Price",
+                    placeholder: "$0.00",
+                    text: $viewModel.purchasePrice,
+                    keyboard: .decimalPad,
+                    field: .purchasePrice,
+                    textSize: 30
+                )
+                .onChange(of: viewModel.purchasePrice) { _, newValue in
+                    viewModel.purchasePrice = InputFormatters.formatCurrencyLive(newValue)
+                }
+
+                propertyIdentityPicker
             }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 18)
         }
     }
-    
 
-    private var addressSuggestions: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(searchService.results, id: \.self) { completion in
-                Button {
-                    Task { await handleSelection(completion) }
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(completion.title)
-                            .font(.system(.footnote, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.richBlack)
-                        Text(completion.subtitle)
-                            .font(.system(.caption, design: .rounded))
-                            .foregroundStyle(Color.richBlack.opacity(0.6))
+    private var stepTwo: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Step 2 · Financing Lab")
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .foregroundStyle(ink)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("Down Payment")
+                            .font(.system(.headline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(ink)
+                        Spacer()
+                        Text("\(viewModel.downPaymentPercent, specifier: "%.1f")%")
+                            .font(.system(.headline, design: .rounded).weight(.bold))
+                            .foregroundStyle(ink)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.cardSurface)
-                    )
+                    Slider(value: $viewModel.downPaymentPercent, in: 10...50, step: 0.5)
+                        .tint(Color.primaryYellow)
+
+                    HStack {
+                        Text("Down Payment Amount")
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                            .foregroundStyle(ink.opacity(0.65))
+                        Spacer()
+                        Text(currencyString(downPaymentAmount))
+                            .font(.system(.subheadline, design: .rounded).weight(.bold))
+                            .foregroundStyle(ink)
+                    }
                 }
-                .buttonStyle(.plain)
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.cardSurface)
+                )
+
+                wizardField(
+                    title: "Interest Rate",
+                    placeholder: "6.50",
+                    text: $viewModel.interestRate,
+                    keyboard: .decimalPad,
+                    field: .interestRate,
+                    textSize: 30,
+                    suffix: "%"
+                )
+                .onChange(of: viewModel.interestRate) { _, newValue in
+                    viewModel.interestRate = InputFormatters.sanitizeDecimal(newValue)
+                }
+
+                loanTermTiles
             }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 18)
         }
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.softGray)
-        )
     }
 
-    private var mapSnapshotSection: some View {
-        Button {
-            // TODO: Implement snapshot regeneration if needed
-        } label: {
-            HStack(spacing: 12) {
-                ZStack {
-                    Color.softGray
-                }
-                .frame(width: 64, height: 64)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    private var locationRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            wizardField(
+                title: "City",
+                placeholder: "Dallas",
+                text: $viewModel.city,
+                keyboard: .default,
+                field: .city
+            )
+            .frame(maxWidth: .infinity)
 
+            wizardField(
+                title: "State",
+                placeholder: "TX",
+                text: $viewModel.state,
+                keyboard: .default,
+                field: .state
+            )
+            .frame(width: 86)
+            .onChange(of: viewModel.state) { _, newValue in
+                viewModel.state = String(newValue.prefix(2)).uppercased()
+            }
+
+            wizardField(
+                title: "ZIP",
+                placeholder: "75001",
+                text: $viewModel.zipCode,
+                keyboard: .numberPad,
+                field: .zip
+            )
+            .frame(width: 118)
+            .onChange(of: viewModel.zipCode) { _, newValue in
+                viewModel.zipCode = newValue.filter(\.isNumber)
+            }
+        }
+    }
+
+    private var stepThree: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Step 3 · Operations")
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .foregroundStyle(ink)
+
+                wizardField(
+                    title: "Reno Budget (Optional)",
+                    placeholder: "$0.00",
+                    text: $viewModel.renoBudget,
+                    keyboard: .decimalPad,
+                    field: .renoBudget,
+                    textSize: 30
+                )
+                .onChange(of: viewModel.renoBudget) { _, newValue in
+                    viewModel.renoBudget = InputFormatters.formatCurrencyLive(newValue)
+                }
+
+                ExpenseModuleView(
+                    module: wizardExpenseModule,
+                    annualCashFlow: wizardMetrics?.annualCashFlow,
+                    mode: $expenseMode,
+                    simpleRate: $simpleExpenseRate,
+                    annualTaxes: $viewModel.annualTaxes,
+                    annualInsurance: $annualInsuranceInput,
+                    managementFee: $managementFee,
+                    maintenanceReserves: $maintenanceReserves
+                )
+
+                if viewModel.city.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "dallas" {
+                    Text("Dallas detected: taxes auto-populate at 2.23% of purchase price.")
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(ink.opacity(0.62))
+                }
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(.red)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 18)
+        }
+    }
+
+    private var footer: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                GradeCircleView(grade: liveGrade)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Map Snapshot")
-                        .font(.system(.footnote, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.richBlack)
-                    Text("Tap to regenerate")
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(Color.richBlack.opacity(0.6))
+                    Text("Live Grade")
+                        .font(.system(.footnote, design: .rounded).weight(.bold))
+                        .foregroundStyle(ink.opacity(0.72))
+                    Text(gradeSubtitle)
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
                 Spacer()
             }
-            .padding(8)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.cardSurface)
+
+            HStack(spacing: 10) {
+                if viewModel.stepIndex > 0 {
+                    Button {
+                        focusedField = nil
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            viewModel.stepIndex -= 1
+                        }
+                    } label: {
+                        Text("Back")
+                            .font(.system(.subheadline, design: .rounded).weight(.bold))
+                            .foregroundStyle(ink)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(ink.opacity(0.24), lineWidth: 1)
+                            )
+                    }
+                    .disabled(isSaving)
+                }
+
+                ZStack {
+                    Button {
+                        focusedField = nil
+                        if viewModel.stepIndex < 2 {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                viewModel.stepIndex += 1
+                            }
+                        } else {
+                            Task { await saveProperty() }
+                        }
+                    } label: {
+                        Text(viewModel.stepIndex == 2 ? (isSaving ? "Saving..." : "Save Property") : "Next")
+                            .font(.system(.subheadline, design: .rounded).weight(.bold))
+                            .foregroundStyle(viewModel.canProceedToNextStep ? Color.richBlack : .white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(viewModel.canProceedToNextStep ? Color.primaryYellow : buttonBlack)
+                        )
+                }
+                    .opacity(viewModel.canProceedToNextStep ? 1 : 0.4)
+                    .disabled(!viewModel.canProceedToNextStep || isSaving)
+
+                    if !viewModel.canProceedToNextStep && !isSaving {
+                        Button {
+                            handleInvalidNextTap()
+                        } label: {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color.clear)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+
+            Text("Fast estimate. Finish details in Property Detail.")
+                .font(.system(.caption2, design: .rounded).weight(.semibold))
+                .foregroundStyle(ink.opacity(0.62))
+                .frame(maxWidth: .infinity, alignment: .center)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .frame(height: 150)
+        .background(
+            Rectangle()
+                .fill(canvasGrey)
+                .shadow(color: Color.black.opacity(0.05), radius: 12, x: 0, y: -6)
+        )
+    }
+
+    private var propertyIdentityPicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Property Identity")
+                .font(.system(.footnote, design: .rounded).weight(.bold))
+                .foregroundStyle(ink.opacity(0.74))
+
+            LazyVGrid(columns: propertyTypeColumns, spacing: 12) {
+                ForEach(PropertyType.allCases) { type in
+                    Button {
+                        selectPropertyType(type)
+                    } label: {
+                        VStack(spacing: 10) {
+                            Image(systemName: type.symbol)
+                                .font(.system(size: 20, weight: .semibold))
+                            Text(type.label)
+                                .font(.system(.footnote, design: .rounded).weight(.bold))
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.9)
+                        }
+                        .foregroundStyle(viewModel.propertyType == type ? Color.primaryYellow : ink)
+                        .frame(maxWidth: .infinity, minHeight: 86)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(viewModel.propertyType == type ? buttonBlack : Color.cardSurface)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(
+                                    viewModel.propertyType == type
+                                    ? Color.primaryYellow.opacity(0.55)
+                                    : Color.black.opacity(0.08),
+                                    lineWidth: 1
+                                )
+                        )
+                        .scaleEffect(viewModel.propertyType == type ? 1.0 : 0.985)
+                        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: viewModel.propertyType)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(2)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(missingFields.contains(.propertyType) ? Color.red.opacity(0.85) : .clear, lineWidth: 2)
             )
+            .modifier(ShakeEffect(shakes: missingFields.contains(.propertyType) ? CGFloat(shakeTick) : 0))
+
+            if viewModel.propertyType == .tenPlus {
+                wizardField(
+                    title: "Exact Unit Count",
+                    placeholder: "10",
+                    text: $viewModel.exactUnitsForTenPlus,
+                    keyboard: .numberPad,
+                    field: .exactUnitsForTenPlus,
+                    textSize: 26
+                )
+                .onChange(of: viewModel.exactUnitsForTenPlus) { _, newValue in
+                    viewModel.exactUnitsForTenPlus = newValue.filter(\.isNumber)
+                }
+            }
+        }
+    }
+
+    private var loanTermTiles: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Loan Term")
+                .font(.system(.footnote, design: .rounded).weight(.bold))
+                .foregroundStyle(ink.opacity(0.74))
+
+            HStack(spacing: 12) {
+                loanTermTile(years: 15)
+                loanTermTile(years: 30)
+            }
+        }
+    }
+
+    private func loanTermTile(years: Int) -> some View {
+        Button {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.78)) {
+                viewModel.loanTermYears = years
+            }
+        } label: {
+            Text("\(years) Years")
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .foregroundStyle(viewModel.loanTermYears == years ? Color.primaryYellow : ink)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(viewModel.loanTermYears == years ? buttonBlack : Color.cardSurface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(
+                            viewModel.loanTermYears == years
+                            ? Color.primaryYellow.opacity(0.55)
+                            : Color.black.opacity(0.08),
+                            lineWidth: 1
+                        )
+                )
         }
         .buttonStyle(.plain)
     }
 
-    private var formBody: some View {
-        VStack(spacing: 20) {
-            addressSection
-            imageSection
-            mapSnapshotSection
-            locationSection
-            pricingSection
-            operatingExpenseSection
-            rentRollSection
-            errorSection
-            saveButton
-        }
-        .padding(24)
-    }
-    private var addressSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            LabeledTextField(title: "Address", text: $address, keyboard: .default)
-                .onChange(of: address) { _, newValue in
-                    searchService.query = newValue
-                    isSearching = true
-                }
+    private func wizardField(
+        title: String,
+        placeholder: String,
+        text: Binding<String>,
+        keyboard: UIKeyboardType,
+        field: AnalysisWizardField,
+        textSize: CGFloat = 18,
+        suffix: String? = nil
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(.footnote, design: .rounded).weight(.bold))
+                .foregroundStyle(ink.opacity(0.74))
 
-            if isSearching && !searchService.results.isEmpty {
-                addressSuggestions
-            }
-        }
-    }
-
-    private var imageSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Property Photo")
-                .font(.system(.headline, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack)
-
-            ZStack {
-                if let url = URL(string: imageURL), !imageURL.isEmpty {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().scaledToFill()
-                        default:
-                            Color.softGray
-                        }
-                    }
-                } else {
-                    VStack(spacing: 6) {
-                        Image(systemName: "photo")
-                            .font(.system(size: 24, weight: .semibold))
-                        Text("No photo yet")
-                            .font(.system(.footnote, design: .rounded))
-                    }
-                    .foregroundStyle(Color.richBlack.opacity(0.6))
-                }
-            }
-            .frame(height: 160)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-            HStack(spacing: 10) {
-                PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
-                    Label("Choose Photo", systemImage: "photo.on.rectangle")
-                        .font(.system(.footnote, design: .rounded).weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-
-                Button {
-                    showCamera = true
-                } label: {
-                    Label("Take Photo", systemImage: "camera")
-                        .font(.system(.footnote, design: .rounded).weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-            }
-
-            if isUploadingImage {
-                Text("Uploading photo...")
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(Color.richBlack.opacity(0.6))
-            }
-            if let imageError {
-                Text(imageError)
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(.red)
-            }
-        }
-    }
-
-    private var locationSection: some View {
-        VStack(spacing: 12) {
-            LabeledTextField(title: "City", text: $city, keyboard: .default)
-            LabeledTextField(title: "State", text: $state, keyboard: .default)
-                .onChange(of: state) { _, newValue in
-                    state = StateAbbreviationFormatter.abbreviate(newValue)
-                }
-            LabeledTextField(title: "ZIP Code", text: $zipCode, keyboard: .numberPad)
-        }
-    }
-
-    private var pricingSection: some View {
-        VStack(spacing: 12) {
-            LabeledTextField(title: "Purchase Price", text: $purchasePrice, keyboard: .decimalPad)
-                .onChange(of: purchasePrice) { _, newValue in
-                    purchasePrice = InputFormatters.formatCurrencyLive(newValue)
-                }
-                .onSubmit {
-                    if let value = InputFormatters.parseCurrency(purchasePrice) {
-                        purchasePrice = Formatters.currencyTwo.string(from: NSNumber(value: value)) ?? purchasePrice
-                    }
-                }
-            LabeledTextField(title: "Down Payment %", text: $downPaymentPercent, keyboard: .decimalPad)
-                .onChange(of: downPaymentPercent) { _, newValue in
-                    downPaymentPercent = InputFormatters.sanitizeDecimal(newValue)
-                }
-                .onSubmit {
-                    if let value = Double(downPaymentPercent) {
-                        downPaymentPercent = String(format: "%.2f", value)
-                    }
-                }
-            LabeledTextField(title: "Interest Rate %", text: $interestRate, keyboard: .decimalPad)
-                .onChange(of: interestRate) { _, newValue in
-                    interestRate = InputFormatters.sanitizeDecimal(newValue)
-                }
-                .onSubmit {
-                    if let value = Double(interestRate) {
-                        interestRate = String(format: "%.2f", value)
-                    }
-                }
-            LabeledTextField(title: "Annual Taxes", text: $annualTaxes, keyboard: .decimalPad)
-                .onChange(of: annualTaxes) { _, newValue in
-                    annualTaxes = InputFormatters.formatCurrencyLive(newValue)
-                }
-                .onSubmit {
-                    if let value = InputFormatters.parseCurrency(annualTaxes) {
-                        annualTaxes = Formatters.currencyTwo.string(from: NSNumber(value: value)) ?? annualTaxes
-                    }
-                }
-            LabeledTextField(title: "Annual Insurance", text: $annualInsurance, keyboard: .decimalPad)
-                .onChange(of: annualInsurance) { _, newValue in
-                    annualInsurance = InputFormatters.formatCurrencyLive(newValue)
-                }
-                .onSubmit {
-                    if let value = InputFormatters.parseCurrency(annualInsurance) {
-                        annualInsurance = Formatters.currencyTwo.string(from: NSNumber(value: value)) ?? annualInsurance
-                    }
-                }
-            Picker("Loan Term", selection: $loanTermYears) {
-                Text("15 years").tag(15)
-                Text("20 years").tag(20)
-                Text("30 years").tag(30)
-            }
-            .pickerStyle(.segmented)
-
-            gradeProfilePicker
-        }
-    }
-
-    private var gradeProfilePicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Grade Profile")
-                .font(.system(.footnote, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack.opacity(0.7))
-
-            Picker("Grade Profile", selection: $selectedProfileId) {
-                let defaultName = gradeProfileStore.profiles.first(where: { $0.id == gradeProfileStore.defaultProfileId })?.name ?? "Default"
-                Text("Default (\(defaultName))").tag(Optional<String>.none)
-                ForEach(gradeProfileStore.profiles, id: \.id) { profile in
-                    Text(profile.name).tag(profile.id)
-                }
-            }
-            .pickerStyle(.menu)
-        }
-    }
-
-    private var errorSection: some View {
-        Group {
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-            }
-        }
-    }
-
-    private var saveButton: some View {
-        Button(isSaving ? "Saving..." : "Save Property") {
-            Task { await saveProperty() }
-        }
-        .buttonStyle(PrimaryButtonStyle())
-        .disabled(isSaving)
-    }
-
-    private var rentRollSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Rent Roll")
-                    .font(.system(.headline, design: .rounded).weight(.semibold))
-                Spacer()
-                Button("Add Unit") {
-                    rentRoll.append(RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: ""))
-                }
-                .font(.system(.footnote, design: .rounded).weight(.semibold))
-            }
-
-            ForEach($rentRoll) { $unit in
-                VStack(spacing: 10) {
-                    LabeledTextField(title: "Unit Type", text: $unit.unitType, keyboard: .default)
-                        .onChange(of: unit.unitType) { _, newValue in
-                            let defaults = UnitTypeParser.bedsBaths(from: newValue)
-                            if unit.bedrooms.trimmingCharacters(in: .whitespaces).isEmpty,
-                               let beds = defaults.beds {
-                                unit.bedrooms = String(beds)
-                            }
-                            if unit.bathrooms.trimmingCharacters(in: .whitespaces).isEmpty,
-                               let baths = defaults.baths {
-                                unit.bathrooms = String(baths)
-                            }
-                        }
-
-                    HStack(spacing: 10) {
-                        LabeledTextField(title: "Monthly Rent", text: $unit.monthlyRent, keyboard: .decimalPad)
-                            .onChange(of: unit.monthlyRent) { _, newValue in
-                                unit.monthlyRent = InputFormatters.formatCurrencyLive(newValue)
-                            }
-                            .onSubmit {
-                                if let value = InputFormatters.parseCurrency(unit.monthlyRent) {
-                                    unit.monthlyRent = Formatters.currencyTwo.string(from: NSNumber(value: value)) ?? unit.monthlyRent
-                                }
-                            }
-
-                        LabeledTextField(title: "Bedrooms", text: $unit.bedrooms, keyboard: .numberPad)
-                            .onChange(of: unit.bedrooms) { _, newValue in
-                                unit.bedrooms = InputFormatters.sanitizeDecimal(newValue)
-                            }
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(missingBedsOrBaths(for: unit) ? Color.red.opacity(0.8) : Color.clear, lineWidth: 1)
-                            )
-
-                        LabeledTextField(title: "Bathrooms", text: $unit.bathrooms, keyboard: .numberPad)
-                            .onChange(of: unit.bathrooms) { _, newValue in
-                                unit.bathrooms = InputFormatters.sanitizeDecimal(newValue)
-                            }
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(missingBedsOrBaths(for: unit) ? Color.red.opacity(0.8) : Color.clear, lineWidth: 1)
-                            )
-                    }
-
-                    if missingBedsOrBaths(for: unit) {
-                        Text("Bedrooms and bathrooms are required.")
-                            .font(.system(.footnote, design: .rounded))
-                            .foregroundStyle(.red)
-                    }
-                    if rentRoll.count > 1 {
-                        Button("Remove Unit") {
-                            rentRoll.removeAll { $0.id == unit.id }
-                        }
-                        .font(.system(.footnote, design: .rounded).weight(.semibold))
-                        .foregroundStyle(.red)
-                    }
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.softGray)
+            HStack(spacing: 8) {
+                TextField(
+                    "",
+                    text: text,
+                    prompt: Text(placeholder)
+                        .foregroundStyle(Color(red: 96.0 / 255.0, green: 96.0 / 255.0, blue: 102.0 / 255.0))
                 )
+                    .keyboardType(keyboard)
+                    .font(.system(size: textSize, weight: .bold, design: .rounded))
+                    .foregroundStyle(ink)
+                    .focused($focusedField, equals: field)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
 
-                if unit.id != rentRoll.last?.id {
-                    Divider()
-                        .background(Color.richBlack.opacity(0.08))
-                        .padding(.vertical, 6)
+                if let suffix {
+                    Text(suffix)
+                        .font(.system(size: textSize * 0.8, weight: .bold, design: .rounded))
+                        .foregroundStyle(ink.opacity(0.72))
                 }
             }
-
-            let totalMonthlyRent = rentRoll.compactMap { Double($0.monthlyRent) }.reduce(0, +)
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Total Monthly Rent")
-                        .font(.system(.caption, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.richBlack.opacity(0.6))
-                    Text(Formatters.currencyTwo.string(from: NSNumber(value: totalMonthlyRent)) ?? "$0")
-                        .font(.system(.subheadline, design: .rounded).weight(.bold))
-                        .foregroundStyle(Color.richBlack)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("Total Annual Rent")
-                        .font(.system(.caption, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.richBlack.opacity(0.6))
-                    Text(Formatters.currencyTwo.string(from: NSNumber(value: totalMonthlyRent * 12.0)) ?? "$0")
-                        .font(.system(.subheadline, design: .rounded).weight(.bold))
-                        .foregroundStyle(Color.richBlack)
-                }
-            }
-            .padding(12)
+            .padding(.vertical, 14)
+            .padding(.horizontal, 14)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(Color.cardSurface)
             )
-        }
-    }
-
-
-    private var operatingExpenseSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Operating Expenses")
-                .font(.system(.headline, design: .rounded).weight(.semibold))
-            
-            Toggle("Use standard expense rate", isOn: $useStandardOperatingExpense)
-                .toggleStyle(SwitchToggleStyle(tint: Color.primaryYellow))
-            
-            if useStandardOperatingExpense {
-                LabeledTextField(title: "Standard Expense %", text: $operatingExpenseRate, keyboard: .decimalPad)
-                    .onChange(of: operatingExpenseRate) { _, newValue in
-                        operatingExpenseRate = InputFormatters.sanitizeDecimal(newValue)
-                    }
-                    .onSubmit {
-                        if let value = Double(operatingExpenseRate) {
-                            operatingExpenseRate = String(format: "%.2f", value)
-                        }
-                    }
-            } else {
-                ForEach($operatingExpenses) { $expense in
-                    VStack(spacing: 10) {
-                        LabeledTextField(title: "Expense Name", text: $expense.name, keyboard: .default)
-                        LabeledTextField(title: "Annual Amount", text: $expense.annualAmount, keyboard: .decimalPad)
-                            .onChange(of: expense.annualAmount) { _, newValue in
-                                expense.annualAmount = InputFormatters.sanitizeDecimal(newValue)
-                            }
-                            .onSubmit {
-                                if let value = Double(expense.annualAmount) {
-                                    expense.annualAmount = Formatters.currencyTwo.string(from: NSNumber(value: value)) ?? expense.annualAmount
-                                }
-                            }
-                        if operatingExpenses.count > 1 {
-                            Button("Remove Expense") {
-                                operatingExpenses.removeAll { $0.id == expense.id }
-                            }
-                            .font(.system(.footnote, design: .rounded).weight(.semibold))
-                            .foregroundStyle(.red)
-                        }
-                    }
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.softGray)
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(
+                        borderColor(for: field),
+                        lineWidth: focusedField == field || missingFields.contains(field) ? 2 : 0
                     )
-                }
-                
-                Button("Add Expense") {
-                    operatingExpenses.append(OperatingExpenseInput(name: "", annualAmount: ""))
-                }
-                .font(.system(.footnote, design: .rounded).weight(.semibold))
-                
-                let total = operatingExpenses.compactMap { Double($0.annualAmount) }.reduce(0, +)
-                MetricRow(title: "Total Operating Expenses", value: Formatters.currencyTwo.string(from: NSNumber(value: total)) ?? "$0")
-            }
+            )
         }
+        .modifier(ShakeEffect(shakes: missingFields.contains(field) ? CGFloat(shakeTick) : 0))
     }
-    
+
+    private func borderColor(for field: AnalysisWizardField) -> Color {
+        if missingFields.contains(field) {
+            return Color.red.opacity(0.85)
+        }
+        if focusedField == field {
+            return Color.primaryYellow
+        }
+        return .clear
+    }
+
+    private var liveGrade: Grade {
+        guard let metrics = wizardMetrics,
+              let purchase = effectivePurchasePrice,
+              let breakdown = wizardMortgageBreakdown else {
+            return wizardMetrics?.grade ?? .dOrF
+        }
+
+        let profile = gradeProfileStore.profiles.first(where: { $0.id == gradeProfileStore.defaultProfileId })
+            ?? gradeProfileStore.profiles.first
+            ?? GradeProfile.defaultProfile
+
+        return MetricsEngine.weightedGrade(
+            metrics: metrics,
+            purchasePrice: purchase,
+            annualPrincipalPaydown: breakdown.annualPrincipal,
+            appreciationRate: 0,
+            cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,
+            profile: profile
+        )
+    }
+
+    private var wizardMetrics: DealMetrics? {
+        guard let effectivePurchase = effectivePurchasePrice, effectivePurchase > 0 else { return nil }
+        guard let interest = Double(viewModel.interestRate), interest > 0 else { return nil }
+        guard let module = wizardExpenseModule else { return nil }
+
+        let roll = (0..<module.unitCount).map { _ in
+            RentUnitInput(
+                monthlyRent: String(defaultMonthlyRentPerUnit),
+                unitType: "2BR",
+                bedrooms: "2",
+                bathrooms: "1"
+            )
+        }
+
+        let debtService = MetricsEngine.mortgageBreakdown(
+            purchasePrice: effectivePurchase,
+            downPaymentPercent: viewModel.downPaymentPercent,
+            interestRate: interest,
+            loanTermYears: Double(viewModel.loanTermYears),
+            annualTaxes: module.effectiveAnnualTaxes,
+            annualInsurance: module.effectiveAnnualInsurance
+        ).map { $0.annualPrincipal + $0.annualInterest } ?? 0
+
+        if expenseMode == .detailed {
+            let netOperatingIncome = module.netOperatingIncome
+            let annualCashFlow = netOperatingIncome - debtService
+            let downPayment = max(effectivePurchase * (viewModel.downPaymentPercent / 100.0), 0.0001)
+            let capRate = effectivePurchase > 0 ? netOperatingIncome / effectivePurchase : 0
+            let cashOnCash = annualCashFlow / downPayment
+            let dcr = debtService > 0 ? netOperatingIncome / debtService : 0
+
+            return DealMetrics(
+                totalAnnualRent: module.grossAnnualRent,
+                netOperatingIncome: netOperatingIncome,
+                capRate: capRate,
+                annualDebtService: debtService,
+                annualCashFlow: annualCashFlow,
+                cashOnCash: cashOnCash,
+                debtCoverageRatio: dcr,
+                grade: MetricsEngine.gradeFor(cashOnCash: cashOnCash, dcr: dcr)
+            )
+        }
+
+        return MetricsEngine.computeMetrics(
+            purchasePrice: effectivePurchase,
+            downPaymentPercent: viewModel.downPaymentPercent,
+            interestRate: interest,
+            annualTaxes: module.effectiveAnnualTaxes,
+            annualInsurance: module.effectiveAnnualInsurance,
+            loanTermYears: Double(viewModel.loanTermYears),
+            rentRoll: roll,
+            useStandardOperatingExpense: true,
+            operatingExpenseRateOverride: operatingExpenseRateValue / 100.0,
+            operatingExpenses: []
+        )
+    }
+
+    private var wizardMortgageBreakdown: MortgageBreakdown? {
+        guard let effectivePurchase = effectivePurchasePrice, effectivePurchase > 0 else { return nil }
+        guard let interest = Double(viewModel.interestRate), interest > 0 else { return nil }
+        guard let module = wizardExpenseModule else { return nil }
+        return MetricsEngine.mortgageBreakdown(
+            purchasePrice: effectivePurchase,
+            downPaymentPercent: viewModel.downPaymentPercent,
+            interestRate: interest,
+            loanTermYears: Double(viewModel.loanTermYears),
+            annualTaxes: module.effectiveAnnualTaxes,
+            annualInsurance: module.effectiveAnnualInsurance
+        )
+    }
+
+    private var gradeSubtitle: String {
+        guard let metrics = wizardMetrics else { return "Enter deal inputs to grade." }
+        let monthly = metrics.annualCashFlow / 12.0
+        let cashFlow = Formatters.currency.string(from: NSNumber(value: monthly)) ?? "$0"
+        return "Cash Flow \(cashFlow)/mo"
+    }
+
+    private func handleInvalidNextTap() {
+        missingFields = viewModel.missingFieldsForCurrentStep()
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
+        withAnimation(.easeInOut(duration: 0.22)) {
+            shakeTick += 1
+        }
+        focusFirstEmptyFieldForCurrentStep()
+    }
+
+    private func focusFirstEmptyFieldForCurrentStep() {
+        let nextField = viewModel.firstEmptyFieldForCurrentStep()
+        focusedField = (nextField == .propertyType) ? nil : nextField
+    }
+
+    @MainActor
     private func saveProperty() async {
         errorMessage = nil
-        guard let purchasePriceValue = InputFormatters.parseCurrency(purchasePrice),
-              let taxesValue = InputFormatters.parseCurrency(annualTaxes),
-              let insuranceValue = InputFormatters.parseCurrency(annualInsurance) else {
-            errorMessage = "Enter a valid purchase price, taxes, and insurance."
+
+        guard let purchase = parseCurrency(viewModel.purchasePrice), purchase > 0 else {
+            errorMessage = "Enter a valid purchase price."
+            withAnimation(.easeInOut(duration: 0.3)) {
+                viewModel.stepIndex = 0
+            }
             return
         }
-        
-        let rentUnits = rentRoll.compactMap { unit -> RentUnit? in
-            guard let rentValue = InputFormatters.parseCurrency(unit.monthlyRent),
-                  let beds = Double(unit.bedrooms),
-                  let baths = Double(unit.bathrooms),
-                  beds >= 0, baths >= 0 else { return nil }
-            return RentUnit(monthlyRent: rentValue, unitType: unit.unitType, bedrooms: beds, bathrooms: baths)
-        }
-        
-        if rentUnits.count != rentRoll.count {
-            errorMessage = "Every unit must have bedrooms and bathrooms."
+        guard let unitCount = viewModel.resolvedUnitCount, unitCount > 0 else {
+            errorMessage = "Enter valid unit count."
+            withAnimation(.easeInOut(duration: 0.3)) {
+                viewModel.stepIndex = 0
+            }
             return
         }
-        
-        let property = Property(
-            address: address,
-            city: city.isEmpty ? nil : city,
-            state: state.isEmpty ? nil : state,
-            zipCode: zipCode.isEmpty ? nil : zipCode,
-            imageURL: imageURL,
-            purchasePrice: purchasePriceValue,
-            rentRoll: rentUnits,
-            useStandardOperatingExpense: useStandardOperatingExpense,
-            operatingExpenseRate: Double(operatingExpenseRate) ?? standardOperatingExpenseRate,
-            operatingExpenses: operatingExpenses.compactMap { item in
-                guard let amount = InputFormatters.parseCurrency(item.annualAmount) else { return nil }
-                return OperatingExpenseItem(name: item.name, annualAmount: amount)
-            },
-            annualTaxes: taxesValue,
-            annualInsurance: insuranceValue,
-            loanTermYears: loanTermYears,
-            downPaymentPercent: Double(downPaymentPercent),
-            interestRate: Double(interestRate),
-            gradeProfileId: selectedProfileId ?? gradeProfileStore.defaultProfileId
+        guard let interest = Double(viewModel.interestRate), interest > 0 else {
+            errorMessage = "Enter a valid interest rate."
+            withAnimation(.easeInOut(duration: 0.3)) {
+                viewModel.stepIndex = 1
+            }
+            return
+        }
+        guard let module = wizardExpenseModule else {
+            errorMessage = "Complete the inputs to save."
+            return
+        }
+
+        let rentRoll: [RentUnit] = (0..<unitCount).map { index in
+            RentUnit(
+                monthlyRent: 0,
+                unitType: "Unit \(index + 1)",
+                bedrooms: 0,
+                bathrooms: 0
+            )
+        }
+
+        let missingAnalysisInputs = buildMissingAnalysisInputs(
+            hasRentRoll: false,
+            hasCapex: false,
+            hasReviewedExpenses: expenseMode == .detailed
         )
-        
+
+        let property = Property(
+            address: viewModel.address.isEmpty ? "Untitled Property" : viewModel.address,
+            city: viewModel.city.isEmpty ? nil : viewModel.city,
+            state: viewModel.state.isEmpty ? nil : viewModel.state,
+            zipCode: viewModel.zipCode.isEmpty ? nil : viewModel.zipCode,
+            imageURL: "",
+            purchasePrice: purchase,
+            rentRoll: rentRoll,
+            useStandardOperatingExpense: expenseMode == .simple,
+            operatingExpenseRate: operatingExpenseRateValue,
+            operatingExpenses: expenseMode == .detailed ? detailedOperatingExpenses : [],
+            annualTaxes: module.effectiveAnnualTaxes,
+            annualInsurance: module.effectiveAnnualInsurance,
+            loanTermYears: viewModel.loanTermYears,
+            downPaymentPercent: viewModel.downPaymentPercent,
+            interestRate: interest,
+            gradeProfileId: safeDefaultGradeProfileId,
+            analysisCompleteness: Property.AnalysisCompletenessState.provisional.rawValue,
+            missingAnalysisInputs: missingAnalysisInputs,
+            renoBudget: parseCurrency(viewModel.renoBudget)
+        )
+
         isSaving = true
+        defer { isSaving = false }
+
         do {
             try await propertyStore.addProperty(property)
             didAddProperty = true
             dismiss()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = friendlySaveError(from: error)
         }
-        isSaving = false
-    }
-    
-    private func missingBedsOrBaths(for unit: RentUnitInput) -> Bool {
-        let beds = unit.bedrooms.trimmingCharacters(in: .whitespaces)
-        let baths = unit.bathrooms.trimmingCharacters(in: .whitespaces)
-        return beds.isEmpty || baths.isEmpty || Double(beds) == nil || Double(baths) == nil
-    }
-    
-    @MainActor
-    private func uploadImage(_ image: UIImage) async {
-        imageError = nil
-        isUploadingImage = true
-        do {
-            let url = try await ImageUploadService.uploadPropertyImage(image)
-            imageURL = url.absoluteString
-        } catch {
-            imageError = error.localizedDescription
-        }
-        isUploadingImage = false
     }
 
-    private func handleSelection(_ completion: MKLocalSearchCompletion) async {
-        do {
-            if let mapItem = try await searchService.select(completion) {
-                let placemark = mapItem.placemark
-                let street = [placemark.subThoroughfare, placemark.thoroughfare]
-                    .compactMap { $0 }
-                    .joined(separator: " ")
-                if !street.isEmpty {
-                    address = street
-                } else if let title = placemark.title {
-                    address = title.components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? title
-                } else {
-                    address = mapItem.name ?? ""
-                }
-                city = placemark.locality ?? ""
-                state = StateAbbreviationFormatter.abbreviate(placemark.administrativeArea ?? "")
-                zipCode = placemark.postalCode ?? ""
-            }
-            isSearching = false
-            searchService.results = []
-        } catch {
-            errorMessage = "Unable to fetch address details."
+    private func autoPopulateDallasTaxesIfNeeded() {
+        let location = viewModel.city.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard location == "dallas" else { return }
+        guard let purchase = parseCurrency(viewModel.purchasePrice), purchase > 0 else { return }
+        let autoTax = purchase * 0.0223
+        viewModel.annualTaxes = Formatters.currencyTwo.string(from: NSNumber(value: autoTax)) ?? viewModel.annualTaxes
+    }
+
+    private func parseCurrency(_ value: String) -> Double? {
+        InputFormatters.parseCurrency(value)
+    }
+
+    private var effectivePurchasePrice: Double? {
+        guard let purchase = parseCurrency(viewModel.purchasePrice), purchase > 0 else { return nil }
+        return purchase + (parseCurrency(viewModel.renoBudget) ?? 0)
+    }
+
+    private var safeDefaultGradeProfileId: String? {
+        guard let id = gradeProfileStore.defaultProfileId, UUID(uuidString: id) != nil else {
+            return nil
+        }
+        return id
+    }
+
+    private var wizardExpenseModule: MFMetricEngine.ExpenseModule? {
+        guard let purchase = parseCurrency(viewModel.purchasePrice), purchase > 0 else { return nil }
+        guard let unitCount = viewModel.resolvedUnitCount, unitCount > 0 else { return nil }
+        let grossAnnualRent = Double(unitCount) * defaultMonthlyRentPerUnit * 12.0
+        return MFMetricEngine.ExpenseModule(
+            purchasePrice: purchase,
+            unitCount: unitCount,
+            grossAnnualRent: grossAnnualRent,
+            annualTaxes: parseCurrency(viewModel.annualTaxes),
+            annualInsurance: parseCurrency(annualInsuranceInput),
+            mgmtFee: parseCurrency(managementFee),
+            maintenanceReserves: parseCurrency(maintenanceReserves)
+        )
+    }
+
+    private var operatingExpenseRateValue: Double {
+        Double(simpleExpenseRate) ?? standardOperatingExpenseRate
+    }
+
+    private var detailedOperatingExpenses: [OperatingExpenseItem] {
+        guard let module = wizardExpenseModule else { return [] }
+        return [
+            OperatingExpenseItem(name: "Management Fee", annualAmount: module.effectiveManagementFee),
+            OperatingExpenseItem(name: "Maintenance Reserves", annualAmount: module.effectiveMaintenanceReserves)
+        ]
+    }
+
+    private func friendlySaveError(from error: Error) -> String {
+        let message = error.localizedDescription
+        if message.localizedCaseInsensitiveContains("not authenticated") {
+            return "Please sign in again, then save the property."
+        }
+        if message.localizedCaseInsensitiveContains("invalid input syntax for type uuid") {
+            return "A profile reference is invalid. Open Grade Profiles once, then try saving again."
+        }
+        if message.localizedCaseInsensitiveContains("column") || message.localizedCaseInsensitiveContains("relation") {
+            return "Supabase schema looks incomplete. Apply the SQL files in /Users/clydiesfreeman/MultiFlow/supabase/migrations, then retry."
+        }
+        return message
+    }
+
+    private var downPaymentAmount: Double {
+        guard let purchase = parseCurrency(viewModel.purchasePrice) else { return 0 }
+        return purchase * (viewModel.downPaymentPercent / 100.0)
+    }
+
+    private func buildMissingAnalysisInputs(
+        hasRentRoll: Bool,
+        hasCapex: Bool,
+        hasReviewedExpenses: Bool
+    ) -> [String] {
+        var missing: [String] = []
+        if !hasRentRoll { missing.append("rent_roll") }
+        if !hasCapex { missing.append("capex_reno") }
+        if !hasReviewedExpenses { missing.append("review_expenses") }
+        return missing
+    }
+
+    private func currencyString(_ value: Double) -> String {
+        Formatters.currency.string(from: NSNumber(value: value)) ?? "$0"
+    }
+
+    private func selectPropertyType(_ type: PropertyType) {
+        withAnimation(.spring(response: 0.26, dampingFraction: 0.72)) {
+            viewModel.propertyType = type
+        }
+
+        if type.isCommercial {
+            let thud = UIImpactFeedbackGenerator(style: .heavy)
+            thud.prepare()
+            thud.impactOccurred(intensity: 0.95)
+        } else {
+            let tap = UIImpactFeedbackGenerator(style: .light)
+            tap.prepare()
+            tap.impactOccurred(intensity: 0.8)
+        }
+
+        if type != .tenPlus {
+            viewModel.exactUnitsForTenPlus = ""
+        } else if viewModel.exactUnitsForTenPlus.isEmpty {
+            viewModel.exactUnitsForTenPlus = "10"
         }
     }
 }
 
+private struct ShakeEffect: GeometryEffect {
+    var shakes: CGFloat
 
-#if DEBUG
+    var animatableData: CGFloat {
+        get { shakes }
+        set { shakes = newValue }
+    }
 
-/// A lightweight preview-only store that mimics the API used by AddPropertySheet
-/// without subclassing a potentially `final` type.
-@MainActor
-final class PreviewPropertyStore: ObservableObject {
-    @Published var lastAddedProperty: Property?
-
-    func addProperty(_ property: Property) async throws {
-        // Simulate a tiny delay and capture the property for preview/testing
-        try? await Task.sleep(nanoseconds: 50_000_000)
-        lastAddedProperty = property
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        let translation = 7 * sin(shakes * .pi * 2.5)
+        return ProjectionTransform(CGAffineTransform(translationX: translation, y: 0))
     }
 }
 
 #Preview {
-    AddPropertySheet(didAddProperty: .constant(false))
-        .environmentObject(PreviewPropertyStore())
-        .environmentObject(GradeProfileStore())
+    AddPropertySheetPreviewHost()
 }
-#endif
 
+private struct AddPropertySheetPreviewHost: View {
+    @State private var didAddProperty = false
+    @StateObject private var propertyStore = PropertyStore(repository: PreviewPropertyRepository())
+    @StateObject private var gradeProfileStore = GradeProfileStore(repository: PreviewGradeProfileRepository())
+
+    var body: some View {
+        AddPropertySheet(didAddProperty: $didAddProperty)
+            .environmentObject(propertyStore)
+            .environmentObject(gradeProfileStore)
+    }
+}
+
+private final class PreviewPropertyRepository: PropertyRepositoryProtocol {
+    func fetchProperties(for userId: String) async throws -> [Property] { [] }
+    func addProperty(_ property: Property, userId: String) async throws {}
+    func updateProperty(_ property: Property, userId: String) async throws {}
+    func deleteProperty(id: String, userId: String) async throws {}
+    func startListening(for userId: String, onChange: @escaping @Sendable () -> Void) async throws {}
+    func stopListening() async {}
+}
+
+private final class PreviewGradeProfileRepository: GradeProfileRepositoryProtocol {
+    func fetchProfiles(for userId: String) async throws -> [GradeProfile] { [GradeProfile.defaultProfile] }
+    func fetchDefaultProfileId(for userId: String) async throws -> String? { nil }
+    func addProfile(_ profile: GradeProfile, userId: String) async throws -> String { profile.id ?? UUID().uuidString }
+    func updateProfile(_ profile: GradeProfile, userId: String) async throws {}
+    func deleteProfile(id: String, userId: String) async throws {}
+    func setDefaultProfileId(_ profileId: String?, userId: String) async throws {}
+    func startListening(for userId: String, onChange: @escaping @Sendable () -> Void) async throws {}
+    func stopListening() async {}
+}

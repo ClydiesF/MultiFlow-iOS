@@ -12,13 +12,6 @@ struct DashboardView: View {
             }
 
             NavigationStack {
-                EvaluatorView()
-            }
-            .tabItem {
-                Label("Evaluator", systemImage: "align.vertical.bottom.fill")
-            }
-
-            NavigationStack {
                 SettingsView()
             }
             .tabItem {

@@ -1,5 +1,4 @@
 import SwiftUI
-import FirebaseAuth
 
 struct SettingsView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
@@ -8,6 +7,7 @@ struct SettingsView: View {
     @AppStorage("defaultAppreciationRate") private var defaultAppreciationRate = 3.0
     @AppStorage("defaultMarginalTaxRate") private var defaultMarginalTaxRate = 24.0
     @AppStorage("defaultLandValuePercent") private var defaultLandValuePercent = 20.0
+    @AppStorage("defaultMonthlyRentPerUnit") private var defaultMonthlyRentPerUnit = 1500.0
     @AppStorage("colorSchemePreference") private var colorSchemePreference = 0
 
     var body: some View {
@@ -133,6 +133,33 @@ struct SettingsView: View {
                             let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
                             if let sanitizedValue = Double(sanitized) {
                                 cashflowBreakEvenThreshold = sanitizedValue
+                            }
+                        }
+                    Text("USD")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.7))
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Default Monthly Rent / Unit")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.7))
+
+                HStack {
+                    TextField("", value: $defaultMonthlyRentPerUnit, formatter: NumberFormatter())
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.plain)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.softGray)
+                        )
+                        .onChange(of: defaultMonthlyRentPerUnit) { _, newValue in
+                            let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
+                            if let sanitizedValue = Double(sanitized) {
+                                defaultMonthlyRentPerUnit = sanitizedValue
                             }
                         }
                     Text("USD")
