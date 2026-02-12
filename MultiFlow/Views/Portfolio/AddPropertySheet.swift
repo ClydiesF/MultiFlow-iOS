@@ -20,6 +20,7 @@ struct AddPropertySheet: View {
     @State private var annualInsuranceInput = ""
     @State private var managementFee = ""
     @State private var maintenanceReserves = ""
+    @State private var rentRollInputs: [RentUnitInput] = []
 
     @FocusState private var focusedField: AnalysisWizardField?
 
@@ -71,6 +72,7 @@ struct AddPropertySheet: View {
             if simpleExpenseRate.isEmpty {
                 simpleExpenseRate = String(standardOperatingExpenseRate)
             }
+            seedRentRollInputsIfNeeded()
             focusFirstEmptyFieldForCurrentStep()
         }
         .onChange(of: viewModel.stepIndex) { _, _ in
@@ -81,6 +83,9 @@ struct AddPropertySheet: View {
         }
         .onChange(of: viewModel.city) { _, _ in
             autoPopulateDallasTaxesIfNeeded()
+        }
+        .onChange(of: viewModel.resolvedUnitCount) { _, _ in
+            seedRentRollInputsIfNeeded()
         }
     }
 
@@ -260,6 +265,13 @@ struct AddPropertySheet: View {
                     annualInsurance: $annualInsuranceInput,
                     managementFee: $managementFee,
                     maintenanceReserves: $maintenanceReserves
+                )
+
+                RentRollEditorView(
+                    units: $rentRollInputs,
+                    style: .compact,
+                    allowsUnitType: true,
+                    requiresValidRentRow: false
                 )
 
                 if viewModel.city.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "dallas" {
@@ -563,13 +575,11 @@ struct AddPropertySheet: View {
         guard let module = wizardExpenseModule else { return nil }
 
         let roll = (0..<module.unitCount).map { _ in
-            RentUnitInput(
-                monthlyRent: String(defaultMonthlyRentPerUnit),
-                unitType: "2BR",
-                bedrooms: "2",
-                bathrooms: "1"
-            )
+            RentUnitInput(monthlyRent: String(defaultMonthlyRentPerUnit), unitType: "Unit", bedrooms: "", bathrooms: "")
         }
+        let editorRoll = rentRollInputs
+        let hasRentRoll = RentRollEditorView.hasAtLeastOneValidRentRow(editorRoll)
+        let rollForMetrics = hasRentRoll ? editorRoll : roll
 
         let debtService = MetricsEngine.mortgageBreakdown(
             purchasePrice: effectivePurchase,
@@ -607,7 +617,7 @@ struct AddPropertySheet: View {
             annualTaxes: module.effectiveAnnualTaxes,
             annualInsurance: module.effectiveAnnualInsurance,
             loanTermYears: Double(viewModel.loanTermYears),
-            rentRoll: roll,
+            rentRoll: rollForMetrics,
             useStandardOperatingExpense: true,
             operatingExpenseRateOverride: operatingExpenseRateValue / 100.0,
             operatingExpenses: []
@@ -679,17 +689,23 @@ struct AddPropertySheet: View {
             return
         }
 
-        let rentRoll: [RentUnit] = (0..<unitCount).map { index in
-            RentUnit(
-                monthlyRent: 0,
-                unitType: "Unit \(index + 1)",
-                bedrooms: 0,
-                bathrooms: 0
-            )
+        let enteredRentUnits = RentRollEditorView.validUnits(from: rentRollInputs)
+        let rentRoll: [RentUnit]
+        if enteredRentUnits.isEmpty {
+            rentRoll = [
+                RentUnit(
+                    monthlyRent: 0,
+                    unitType: "Unit 1",
+                    bedrooms: 0,
+                    bathrooms: 0
+                )
+            ]
+        } else {
+            rentRoll = enteredRentUnits
         }
 
         let missingAnalysisInputs = buildMissingAnalysisInputs(
-            hasRentRoll: false,
+            hasRentRoll: !enteredRentUnits.isEmpty,
             hasCapex: false,
             hasReviewedExpenses: expenseMode == .detailed
         )
@@ -755,10 +771,19 @@ struct AddPropertySheet: View {
     private var wizardExpenseModule: MFMetricEngine.ExpenseModule? {
         guard let purchase = parseCurrency(viewModel.purchasePrice), purchase > 0 else { return nil }
         guard let unitCount = viewModel.resolvedUnitCount, unitCount > 0 else { return nil }
-        let grossAnnualRent = Double(unitCount) * defaultMonthlyRentPerUnit * 12.0
+        let enteredRentUnits = RentRollEditorView.validUnits(from: rentRollInputs)
+        let grossAnnualRent: Double
+        let moduleUnitCount: Int
+        if enteredRentUnits.isEmpty {
+            grossAnnualRent = Double(unitCount) * defaultMonthlyRentPerUnit * 12.0
+            moduleUnitCount = unitCount
+        } else {
+            grossAnnualRent = enteredRentUnits.reduce(0) { $0 + $1.monthlyRent } * 12.0
+            moduleUnitCount = enteredRentUnits.count
+        }
         return MFMetricEngine.ExpenseModule(
             purchasePrice: purchase,
-            unitCount: unitCount,
+            unitCount: moduleUnitCount,
             grossAnnualRent: grossAnnualRent,
             annualTaxes: parseCurrency(viewModel.annualTaxes),
             annualInsurance: parseCurrency(annualInsuranceInput),
@@ -834,6 +859,21 @@ struct AddPropertySheet: View {
         } else if viewModel.exactUnitsForTenPlus.isEmpty {
             viewModel.exactUnitsForTenPlus = "10"
         }
+
+        seedRentRollInputsIfNeeded()
+    }
+
+    private func seedRentRollInputsIfNeeded() {
+        guard rentRollInputs.isEmpty else { return }
+        rentRollInputs = [
+            RentUnitInput(
+                monthlyRent: "",
+                unitType: "Unit 1",
+                bedrooms: "",
+                bathrooms: "",
+                squareFeet: ""
+            )
+        ]
     }
 }
 

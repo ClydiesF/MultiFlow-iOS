@@ -4,6 +4,7 @@ import UIKit
 struct PropertyCardView: View {
     let property: Property
     var onUpdateStrategy: ((Double) -> Void)? = nil
+    var onOpenDetail: (() -> Void)? = nil
 
     @State private var isFlipped = false
     @State private var targetDCR = 1.25
@@ -33,10 +34,9 @@ struct PropertyCardView: View {
         .frame(height: 325)
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .onTapGesture {
-            withAnimation(flipAnimation) {
-                isFlipped.toggle()
-            }
+            onOpenDetail?()
         }
+        .gesture(flipGesture)
         .onChange(of: isFlipped) { _, _ in
             let generator = UIImpactFeedbackGenerator(style: .light)
             generator.prepare()
@@ -44,6 +44,23 @@ struct PropertyCardView: View {
                 generator.impactOccurred(intensity: 0.9)
             }
         }
+    }
+
+    private var flipGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onEnded { value in
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                let threshold: CGFloat = 56
+                if value.translation.width <= -threshold, !isFlipped {
+                    withAnimation(flipAnimation) {
+                        isFlipped = true
+                    }
+                } else if value.translation.width >= threshold, isFlipped {
+                    withAnimation(flipAnimation) {
+                        isFlipped = false
+                    }
+                }
+            }
     }
 
     private var frontCard: some View {

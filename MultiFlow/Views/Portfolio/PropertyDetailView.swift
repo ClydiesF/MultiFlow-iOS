@@ -1,6 +1,7 @@
 import SwiftUI
 import Charts
 import MapKit
+import UIKit
 
 struct PropertyDetailView: View {
     @EnvironmentObject var propertyStore: PropertyStore
@@ -44,6 +45,12 @@ struct PropertyDetailView: View {
     @State private var mapSnapshotURL: URL?
     @State private var mapCoordinate: CLLocationCoordinate2D?
     @State private var isLoadingMap = false
+    @State private var inlineRentRollInputs: [RentUnitInput] = []
+    @State private var inlineRentRollIsValid = false
+    @State private var inlineRentRollIsSaving = false
+    @State private var inlineRentRollError: String?
+    @State private var inlineRentRollAutosaveTask: Task<Void, Never>?
+    @State private var inlineRentRollLastSavedFingerprint = ""
 
     var body: some View {
         ZStack {
@@ -97,6 +104,7 @@ struct PropertyDetailView: View {
         }
         .onAppear {
             simpleExpenseRate = String(standardOperatingExpenseRate)
+            syncInlineRentRollInputs(from: activeProperty)
             Task { await fetchMapSnapshot() }
         }
         .onChange(of: activeProperty.id) { _, _ in
@@ -104,6 +112,19 @@ struct PropertyDetailView: View {
                 mapSnapshotURL = nil
                 Task { await fetchMapSnapshot() }
             }
+            if !isEditingAnalysis {
+                syncInlineRentRollInputs(from: activeProperty)
+            }
+        }
+        .onChange(of: activeProperty.rentRoll) { _, _ in
+            guard !isEditingAnalysis else { return }
+            syncInlineRentRollInputs(from: activeProperty)
+        }
+        .onChange(of: inlineRentRollInputs) { _, _ in
+            scheduleInlineRentRollAutosave()
+        }
+        .onDisappear {
+            inlineRentRollAutosaveTask?.cancel()
         }
         .alert("Delete Property?", isPresented: $showDeleteConfirm) {
             Button("Delete", role: .destructive) {
@@ -405,92 +426,54 @@ struct PropertyDetailView: View {
 
     private var rentRollSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Rent Roll")
-                .font(.system(.title3, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack)
-
-            if activeProperty.rentRoll.isEmpty {
-                Text("No rent roll added yet.")
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(Color.richBlack.opacity(0.6))
-            } else {
-                ForEach(activeProperty.rentRoll, id: \.id) { unit in
-                    VStack(spacing: 10) {
-                        Text(unit.unitType.isEmpty ? "Unit" : unit.unitType)
-                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.richBlack)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        HStack(spacing: 10) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Monthly Rent")
-                                    .font(.system(.caption2, design: .rounded).weight(.semibold))
-                                    .foregroundStyle(Color.richBlack.opacity(0.5))
-                                Text(Formatters.currencyTwo.string(from: NSNumber(value: unit.monthlyRent)) ?? "$0")
-                                    .font(.system(.footnote, design: .rounded).weight(.semibold))
-                                    .foregroundStyle(Color.richBlack)
-                            }
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Bedrooms")
-                                    .font(.system(.caption2, design: .rounded).weight(.semibold))
-                                    .foregroundStyle(Color.richBlack.opacity(0.5))
-                                let bedsText = Formatters.bedsBaths.string(from: NSNumber(value: unit.bedrooms)) ?? "\(unit.bedrooms)"
-                                Text(bedsText)
-                                    .font(.system(.footnote, design: .rounded).weight(.semibold))
-                                    .foregroundStyle(Color.richBlack)
-                            }
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Bathrooms")
-                                    .font(.system(.caption2, design: .rounded).weight(.semibold))
-                                    .foregroundStyle(Color.richBlack.opacity(0.5))
-                                let bathsText = Formatters.bedsBaths.string(from: NSNumber(value: unit.bathrooms)) ?? "\(unit.bathrooms)"
-                                Text(bathsText)
-                                    .font(.system(.footnote, design: .rounded).weight(.semibold))
-                                    .foregroundStyle(Color.richBlack)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.softGray)
-                    )
-
-                    if unit.id != activeProperty.rentRoll.last?.id {
-                        Divider()
-                            .background(Color.richBlack.opacity(0.08))
-                            .padding(.vertical, 6)
-                    }
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Rent Roll")
+                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Text("Inline editing is live. Save when ready.")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.62))
                 }
-
-                let totalMonthlyRent = activeProperty.rentRoll.reduce(0) { $0 + $1.monthlyRent }
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Total Monthly Rent")
-                            .font(.system(.caption, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.richBlack.opacity(0.6))
-                        Text(Formatters.currencyTwo.string(from: NSNumber(value: totalMonthlyRent)) ?? "$0")
-                            .font(.system(.subheadline, design: .rounded).weight(.bold))
-                            .foregroundStyle(Color.richBlack)
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Text("Total Annual Rent")
-                            .font(.system(.caption, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.richBlack.opacity(0.6))
-                        Text(Formatters.currencyTwo.string(from: NSNumber(value: totalMonthlyRent * 12.0)) ?? "$0")
-                            .font(.system(.subheadline, design: .rounded).weight(.bold))
-                            .foregroundStyle(Color.richBlack)
-                    }
+                Spacer()
+                if isEditingAnalysis {
+                    Text("Finish analysis edit to save here")
+                        .font(.system(.caption2, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.6))
+                        .multilineTextAlignment(.trailing)
                 }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.cardSurface)
-                )
+            }
+
+            RentRollEditorView(
+                units: $inlineRentRollInputs,
+                style: .full,
+                allowsUnitType: true,
+                requiresValidRentRow: true
+            ) { valid in
+                inlineRentRollIsValid = valid
+            }
+
+            HStack {
+                if inlineRentRollIsSaving {
+                    ProgressView()
+                        .scaleEffect(0.85)
+                    Text("Saving rent roll...")
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.68))
+                } else if let inlineRentRollError {
+                    Text(inlineRentRollError)
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(.red)
+                } else if inlineRentRollIsValid {
+                    Text("Auto-save enabled")
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.65))
+                } else {
+                    Text("Enter rent for at least one unit")
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.55))
+                }
+                Spacer()
             }
         }
         .cardStyle()
@@ -825,49 +808,12 @@ struct PropertyDetailView: View {
                     renoBudget = InputFormatters.formatCurrencyLive(newValue)
                 }
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Rent Roll")
-                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Color.richBlack)
-
-                HStack(spacing: 8) {
-                    LabeledTextField(title: "Apply Rent To All", text: $applyRentToAll, keyboard: .decimalPad)
-                        .onChange(of: applyRentToAll) { _, newValue in
-                            applyRentToAll = InputFormatters.formatCurrencyLive(newValue)
-                        }
-                    Button("Apply") {
-                        guard !applyRentToAll.isEmpty else { return }
-                        for index in rentRollInputs.indices {
-                            rentRollInputs[index].monthlyRent = applyRentToAll
-                        }
-                    }
-                    .font(.system(.footnote, design: .rounded).weight(.bold))
-                    .foregroundStyle(Color.richBlack)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.richBlack.opacity(0.2), lineWidth: 1)
-                    )
-                }
-
-                ForEach($rentRollInputs) { $unit in
-                    VStack(spacing: 8) {
-                        LabeledTextField(title: "Unit Type", text: $unit.unitType, keyboard: .default)
-                        HStack(spacing: 8) {
-                            LabeledTextField(title: "Monthly Rent", text: $unit.monthlyRent, keyboard: .decimalPad)
-                                .onChange(of: unit.monthlyRent) { _, newValue in
-                                    unit.monthlyRent = InputFormatters.formatCurrencyLive(newValue)
-                                }
-                            LabeledTextField(title: "Beds", text: $unit.bedrooms, keyboard: .numberPad)
-                                .onChange(of: unit.bedrooms) { _, newValue in
-                                    unit.bedrooms = InputFormatters.sanitizeDecimal(newValue)
-                                }
-                            LabeledTextField(title: "Baths", text: $unit.bathrooms, keyboard: .numberPad)
-                                .onChange(of: unit.bathrooms) { _, newValue in
-                                    unit.bathrooms = InputFormatters.sanitizeDecimal(newValue)
-                }
-            }
+            RentRollEditorView(
+                units: $rentRollInputs,
+                style: .full,
+                allowsUnitType: true,
+                requiresValidRentRow: true
+            )
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
@@ -904,28 +850,6 @@ struct PropertyDetailView: View {
                         .foregroundStyle(.red)
                     }
                 }
-            }
-                        if rentRollInputs.count > 1 {
-                            Button("Remove Unit") {
-                                rentRollInputs.removeAll { $0.id == unit.id }
-                            }
-                            .font(.system(.footnote, design: .rounded).weight(.semibold))
-                            .foregroundStyle(.red)
-                        }
-                    }
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.softGray)
-                    )
-                }
-
-                Button("Add Unit") {
-                    rentRollInputs.append(
-                        RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: "")
-                    )
-                }
-                .font(.system(.footnote, design: .rounded).weight(.semibold))
             }
 
             HStack(spacing: 10) {
@@ -1109,6 +1033,7 @@ struct PropertyDetailView: View {
 
     private func beginAnalysisEdit() {
         isEditingAnalysis = true
+        inlineRentRollError = nil
         let source = activeProperty
         address = source.address
         city = source.city ?? ""
@@ -1125,11 +1050,12 @@ struct PropertyDetailView: View {
                 monthlyRent: Formatters.currencyTwo.string(from: NSNumber(value: $0.monthlyRent)) ?? String($0.monthlyRent),
                 unitType: $0.unitType,
                 bedrooms: Formatters.bedsBaths.string(from: NSNumber(value: $0.bedrooms)) ?? String($0.bedrooms),
-                bathrooms: Formatters.bedsBaths.string(from: NSNumber(value: $0.bathrooms)) ?? String($0.bathrooms)
+                bathrooms: Formatters.bedsBaths.string(from: NSNumber(value: $0.bathrooms)) ?? String($0.bathrooms),
+                squareFeet: $0.squareFeet.map { String(Int($0)) } ?? ""
             )
         }
         if rentRollInputs.isEmpty {
-            rentRollInputs = [RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: "")]
+            rentRollInputs = [RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: "", squareFeet: "")]
         }
 
         let isStandard = source.useStandardOperatingExpense ?? true
@@ -1157,21 +1083,92 @@ struct PropertyDetailView: View {
         exportError = nil
     }
 
-    private var draftRentUnits: [RentUnit]? {
-        let units = rentRollInputs.compactMap { unit -> RentUnit? in
-            guard let rentValue = InputFormatters.parseCurrency(unit.monthlyRent),
-                  let beds = Double(unit.bedrooms),
-                  let baths = Double(unit.bathrooms),
-                  beds >= 0, baths >= 0 else { return nil }
-            return RentUnit(
-                id: unit.id.uuidString,
-                monthlyRent: rentValue,
-                unitType: unit.unitType,
-                bedrooms: beds,
-                bathrooms: baths
+    private func syncInlineRentRollInputs(from property: Property) {
+        inlineRentRollAutosaveTask?.cancel()
+        inlineRentRollInputs = property.rentRoll.map {
+            RentUnitInput(
+                monthlyRent: Formatters.currencyTwo.string(from: NSNumber(value: $0.monthlyRent)) ?? String($0.monthlyRent),
+                unitType: $0.unitType,
+                bedrooms: Formatters.bedsBaths.string(from: NSNumber(value: $0.bedrooms)) ?? String($0.bedrooms),
+                bathrooms: Formatters.bedsBaths.string(from: NSNumber(value: $0.bathrooms)) ?? String($0.bathrooms),
+                squareFeet: $0.squareFeet.map { String(Int($0)) } ?? ""
             )
         }
-        return units.count == rentRollInputs.count ? units : nil
+        if inlineRentRollInputs.isEmpty {
+            inlineRentRollInputs = [RentUnitInput(monthlyRent: "", unitType: "Unit 1", bedrooms: "", bathrooms: "", squareFeet: "")]
+        }
+        inlineRentRollIsValid = RentRollEditorView.hasAtLeastOneValidRentRow(inlineRentRollInputs)
+        inlineRentRollLastSavedFingerprint = rentRollFingerprint(property.rentRoll)
+    }
+
+    private func scheduleInlineRentRollAutosave() {
+        inlineRentRollAutosaveTask?.cancel()
+        guard !isEditingAnalysis else { return }
+        guard inlineRentRollIsValid else {
+            inlineRentRollError = nil
+            return
+        }
+
+        let units = RentRollEditorView.validUnits(from: inlineRentRollInputs)
+        guard !units.isEmpty else { return }
+        let fingerprint = rentRollFingerprint(units)
+        guard fingerprint != inlineRentRollLastSavedFingerprint else {
+            inlineRentRollError = nil
+            return
+        }
+
+        inlineRentRollAutosaveTask = Task {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            await saveInlineRentRoll(units: units, fingerprint: fingerprint)
+        }
+    }
+
+    private func saveInlineRentRoll(units: [RentUnit], fingerprint: String) async {
+        inlineRentRollError = nil
+        guard !isEditingAnalysis else {
+            return
+        }
+        guard let propertyId = activeProperty.id,
+              let index = propertyStore.properties.firstIndex(where: { $0.id == propertyId }) else {
+            inlineRentRollError = "Property was not found. Reload and try again."
+            return
+        }
+        guard fingerprint != inlineRentRollLastSavedFingerprint else {
+            return
+        }
+
+        inlineRentRollIsSaving = true
+        var updated = propertyStore.properties[index]
+        updated.rentRoll = units
+        updated.missingAnalysisInputs = missingAnalysisInputs(for: updated)
+        updated.analysisCompleteness = analysisCompletenessState(for: updated).rawValue
+
+        do {
+            try await propertyStore.updateProperty(updated)
+            inlineRentRollLastSavedFingerprint = fingerprint
+        } catch {
+            inlineRentRollError = error.localizedDescription
+        }
+        inlineRentRollIsSaving = false
+    }
+
+    private func rentRollFingerprint(_ units: [RentUnit]) -> String {
+        units.map {
+            [
+                String(format: "%.2f", $0.monthlyRent),
+                $0.unitType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                String(format: "%.2f", $0.bedrooms),
+                String(format: "%.2f", $0.bathrooms),
+                $0.squareFeet.map { String(format: "%.0f", $0) } ?? ""
+            ].joined(separator: "|")
+        }
+        .joined(separator: "||")
+    }
+
+    private var draftRentUnits: [RentUnit]? {
+        let units = RentRollEditorView.validUnits(from: rentRollInputs)
+        return units.isEmpty ? nil : units
     }
 
     private var expenseModule: MFMetricEngine.ExpenseModule? {
