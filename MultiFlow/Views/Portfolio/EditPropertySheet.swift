@@ -213,114 +213,12 @@ struct EditPropertySheet: View {
     }
 
     private var rentRollSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Rent Roll")
-                    .font(.system(.headline, design: .rounded).weight(.semibold))
-                Spacer()
-                Button("Add Unit") {
-                    rentRoll.append(RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: ""))
-                }
-                .font(.system(.footnote, design: .rounded).weight(.semibold))
-            }
-
-            ForEach($rentRoll) { $unit in
-                VStack(spacing: 10) {
-                    LabeledTextField(title: "Unit Type", text: $unit.unitType, keyboard: .default)
-                        .onChange(of: unit.unitType) { _, newValue in
-                            let defaults = UnitTypeParser.bedsBaths(from: newValue)
-                            if unit.bedrooms.trimmingCharacters(in: .whitespaces).isEmpty,
-                               let beds = defaults.beds {
-                                unit.bedrooms = String(beds)
-                            }
-                            if unit.bathrooms.trimmingCharacters(in: .whitespaces).isEmpty,
-                               let baths = defaults.baths {
-                                unit.bathrooms = String(baths)
-                            }
-                        }
-
-                    HStack(spacing: 10) {
-                        LabeledTextField(title: "Monthly Rent", text: $unit.monthlyRent, keyboard: .decimalPad)
-                            .onChange(of: unit.monthlyRent) { _, newValue in
-                                unit.monthlyRent = InputFormatters.formatCurrencyLive(newValue)
-                            }
-                            .onSubmit {
-                                if let value = InputFormatters.parseCurrency(unit.monthlyRent) {
-                                    unit.monthlyRent = Formatters.currencyTwo.string(from: NSNumber(value: value)) ?? unit.monthlyRent
-                                }
-                            }
-
-                        LabeledTextField(title: "Bedrooms", text: $unit.bedrooms, keyboard: .numberPad)
-                            .onChange(of: unit.bedrooms) { _, newValue in
-                                unit.bedrooms = InputFormatters.sanitizeDecimal(newValue)
-                            }
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(missingBedsOrBaths(for: unit) ? Color.red.opacity(0.8) : Color.clear, lineWidth: 1)
-                            )
-
-                        LabeledTextField(title: "Bathrooms", text: $unit.bathrooms, keyboard: .numberPad)
-                            .onChange(of: unit.bathrooms) { _, newValue in
-                                unit.bathrooms = InputFormatters.sanitizeDecimal(newValue)
-                            }
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(missingBedsOrBaths(for: unit) ? Color.red.opacity(0.8) : Color.clear, lineWidth: 1)
-                            )
-                    }
-
-                    if missingBedsOrBaths(for: unit) {
-                        Text("Bedrooms and bathrooms are required.")
-                            .font(.system(.footnote, design: .rounded))
-                            .foregroundStyle(.red)
-                    }
-                    if rentRoll.count > 1 {
-                        Button("Remove Unit") {
-                            rentRoll.removeAll { $0.id == unit.id }
-                        }
-                        .font(.system(.footnote, design: .rounded).weight(.semibold))
-                        .foregroundStyle(.red)
-                    }
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.softGray)
-                )
-
-                if unit.id != rentRoll.last?.id {
-                    Divider()
-                        .background(Color.richBlack.opacity(0.08))
-                        .padding(.vertical, 6)
-                }
-            }
-
-            let totalMonthlyRent = rentRoll.compactMap { Double($0.monthlyRent) }.reduce(0, +)
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Total Monthly Rent")
-                        .font(.system(.caption, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.richBlack.opacity(0.6))
-                    Text(Formatters.currencyTwo.string(from: NSNumber(value: totalMonthlyRent)) ?? "$0")
-                        .font(.system(.subheadline, design: .rounded).weight(.bold))
-                        .foregroundStyle(Color.richBlack)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("Total Annual Rent")
-                        .font(.system(.caption, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.richBlack.opacity(0.6))
-                    Text(Formatters.currencyTwo.string(from: NSNumber(value: totalMonthlyRent * 12.0)) ?? "$0")
-                        .font(.system(.subheadline, design: .rounded).weight(.bold))
-                        .foregroundStyle(Color.richBlack)
-                }
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.cardSurface)
-            )
-        }
+        RentRollEditorView(
+            units: $rentRoll,
+            style: .full,
+            allowsUnitType: true,
+            requiresValidRentRow: true
+        )
     }
 
 
@@ -430,11 +328,12 @@ struct EditPropertySheet: View {
                 monthlyRent: Formatters.currencyTwo.string(from: NSNumber(value: $0.monthlyRent)) ?? String($0.monthlyRent),
                 unitType: $0.unitType,
                 bedrooms: String($0.bedrooms),
-                bathrooms: String($0.bathrooms)
+                bathrooms: String($0.bathrooms),
+                squareFeet: $0.squareFeet.map { String(Int($0)) } ?? ""
             )
         }
         if rentRoll.isEmpty {
-            rentRoll = [RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: "")]
+            rentRoll = [RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: "", squareFeet: "")]
         }
         useStandardOperatingExpense = property.useStandardOperatingExpense ?? true
         operatingExpenseRate = property.operatingExpenseRate.map { "\($0)" } ?? String(standardOperatingExpenseRate)
@@ -453,16 +352,9 @@ struct EditPropertySheet: View {
             return
         }
 
-        let rentUnits = rentRoll.compactMap { unit -> RentUnit? in
-            guard let rentValue = InputFormatters.parseCurrency(unit.monthlyRent),
-                  let beds = Double(unit.bedrooms),
-                  let baths = Double(unit.bathrooms),
-                  beds >= 0, baths >= 0 else { return nil }
-            return RentUnit(id: unit.id.uuidString, monthlyRent: rentValue, unitType: unit.unitType, bedrooms: beds, bathrooms: baths)
-        }
-
-        if rentUnits.count != rentRoll.count {
-            errorMessage = "Every unit must have bedrooms and bathrooms."
+        let rentUnits = RentRollEditorView.validUnits(from: rentRoll)
+        if rentUnits.isEmpty {
+            errorMessage = "Add at least one unit with monthly rent."
             return
         }
 
@@ -502,11 +394,6 @@ struct EditPropertySheet: View {
         isSaving = false
     }
 
-    private func missingBedsOrBaths(for unit: RentUnitInput) -> Bool {
-        let beds = unit.bedrooms.trimmingCharacters(in: .whitespaces)
-        let baths = unit.bathrooms.trimmingCharacters(in: .whitespaces)
-        return beds.isEmpty || baths.isEmpty || Double(beds) == nil || Double(baths) == nil
-    }
 }
 
 #Preview {

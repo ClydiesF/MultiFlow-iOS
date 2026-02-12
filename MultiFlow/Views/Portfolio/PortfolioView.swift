@@ -13,6 +13,7 @@ struct PortfolioView: View {
     @State private var deleteToastTask: Task<Void, Never>?
     @State private var showRestoreErrorToast = false
     @State private var restoreErrorMessage: String?
+    @State private var selectedPropertyForDetail: Property?
 
     var body: some View {
         ZStack {
@@ -36,6 +37,8 @@ struct PortfolioView: View {
                             ForEach(propertyStore.properties) { property in
                                 PropertyCardView(property: property) { updatedOffer in
                                     saveStrategyOffer(updatedOffer, for: property)
+                                } onOpenDetail: {
+                                    selectedPropertyForDetail = property
                                 }
                             }
                         }
@@ -65,6 +68,11 @@ struct PortfolioView: View {
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $selectedPropertyForDetail) { property in
+            PropertyDetailView(property: property)
+                .environmentObject(propertyStore)
+                .environmentObject(gradeProfileStore)
+        }
         .toolbar {
             Button {
                 showingAdd = true
