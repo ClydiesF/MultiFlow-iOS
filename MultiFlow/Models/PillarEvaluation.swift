@@ -18,6 +18,36 @@ enum Pillar: String, CaseIterable, Hashable {
             return "Tax Incentives"
         }
     }
+
+    var shortTitle: String {
+        switch self {
+        case .cashFlow:
+            return "Cash Flow"
+        case .mortgagePaydown:
+            return "Paydown"
+        case .equity:
+            return "Equity"
+        case .taxIncentives:
+            return "Tax"
+        }
+    }
+
+    var iconSystemName: String {
+        switch self {
+        case .cashFlow:
+            return "dollarsign.circle.fill"
+        case .mortgagePaydown:
+            return "banknote.fill"
+        case .equity:
+            return "chart.line.uptrend.xyaxis.circle.fill"
+        case .taxIncentives:
+            return "percent"
+        }
+    }
+
+    var accessibilityLabel: String {
+        title
+    }
 }
 
 enum PillarStatus: String, Hashable {
@@ -48,6 +78,14 @@ struct PillarResult: Hashable {
     var monthlyValue: Double?
     var annualValue: Double?
     var thresholdValue: Double?
+
+    var isMetForDisplay: Bool {
+        status == .met
+    }
+}
+
+extension PillarResult: Identifiable {
+    var id: String { pillar.rawValue }
 }
 
 struct PillarEvaluation: Hashable {

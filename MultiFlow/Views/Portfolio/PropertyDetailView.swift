@@ -1,7 +1,7 @@
 import SwiftUI
 import Charts
-import MapKit
 import UIKit
+import PhotosUI
 
 struct PropertyDetailView: View {
     @EnvironmentObject var propertyStore: PropertyStore
@@ -9,6 +9,7 @@ struct PropertyDetailView: View {
     @AppStorage("standardOperatingExpenseRate") private var standardOperatingExpenseRate = 35.0
     @AppStorage("cashflowBreakEvenThreshold") private var cashflowBreakEvenThreshold = 500.0
     @AppStorage("defaultMonthlyRentPerUnit") private var defaultMonthlyRentPerUnit = 1500.0
+    @AppStorage("defaultClosingCostRate") private var defaultClosingCostRate = 3.0
     @Environment(\.dismiss) private var dismiss
     let property: Property
 
@@ -42,15 +43,24 @@ struct PropertyDetailView: View {
     @State private var termOverride: Int?
     @State private var showDeleteConfirm = false
     @State private var deleteError: String?
-    @State private var mapSnapshotURL: URL?
-    @State private var mapCoordinate: CLLocationCoordinate2D?
-    @State private var isLoadingMap = false
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var showPhotoSourcePopover = false
+    @State private var showPhotoLibraryPicker = false
+    @State private var showCamera = false
+    @State private var isUploadingImage = false
+    @State private var photoUploadError: String?
     @State private var inlineRentRollInputs: [RentUnitInput] = []
     @State private var inlineRentRollIsValid = false
     @State private var inlineRentRollIsSaving = false
     @State private var inlineRentRollError: String?
     @State private var inlineRentRollAutosaveTask: Task<Void, Never>?
     @State private var inlineRentRollLastSavedFingerprint = ""
+    @State private var selectedPillarResult: PillarResult?
+    @State private var showingMortgageDetails = false
+    @State private var showingCashToCloseLab = false
+    @State private var isEditingExpenses = false
+    @State private var isSavingExpenses = false
+    @State private var expenseSaveError: String?
 
     var body: some View {
         ZStack {
@@ -59,20 +69,19 @@ struct PropertyDetailView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 20) {
                     header
-                    completeAnalysisSection
-                    photoSection
+                    if shouldShowCompleteAnalysisSection {
+                        completeAnalysisSection
+                    }
+                    mediaActionChipsRow
                     summarySection
+                    pillarsSection
+                    mortgageSection
+                    cashToCloseSection
                     if isEditingAnalysis {
                         analysisEditSection
                     }
-                    locationSection
-                    mortgageSection
-                    metricsSection
-                    pillarsSection
-                    detailsSection
                     operatingExpenseSection
                     rentRollSection
-                    exportSection
                 }
                 .padding(24)
             }
@@ -88,13 +97,13 @@ struct PropertyDetailView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button(isEditingAnalysis ? "Cancel" : "Edit Analysis") {
-                    if isEditingAnalysis {
-                        showDiscardChangesConfirm = true
-                    } else {
-                        beginAnalysisEdit()
-                    }
+                Button {
+                    Task { await exportPDF() }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
                 }
+                .disabled(isExporting)
+                .accessibilityLabel("Export deal summary")
             }
         }
         .sheet(isPresented: $showShare) {
@@ -102,16 +111,83 @@ struct PropertyDetailView: View {
                 ActivityView(activityItems: [shareURL])
             }
         }
+        .sheet(item: $infoMetric) { metric in
+            MetricInfoSheet(metric: metric)
+        }
+        .sheet(item: $selectedPillarResult) { result in
+            PillarDetailSheet(result: result)
+                .presentationDetents([.height(pillarSheetHeight(for: result))])
+                .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(isPresented: $showingMortgageDetails) {
+            if mortgageBreakdown != nil {
+                MortgageDetailSheet(
+                    purchasePrice: activeProperty.purchasePrice,
+                    baseline: MortgageScenarioValues(
+                        downPaymentPercent: activeProperty.downPaymentPercent ?? 25,
+                        interestRate: activeProperty.interestRate ?? 6.0,
+                        annualTaxes: activeProperty.annualTaxes ?? (activeProperty.annualTaxesInsurance ?? 0),
+                        annualInsurance: activeProperty.annualInsurance ?? 0,
+                        termYears: termOverride ?? activeProperty.loanTermYears ?? 30
+                    ),
+                    baselineMetrics: MetricsEngine.computeMetrics(property: activeProperty),
+                    baselineGrade: weightedGrade(for: activeProperty),
+                    evaluateScenario: { scenario in
+                        var scenarioProperty = activeProperty
+                        scenarioProperty.downPaymentPercent = scenario.downPaymentPercent
+                        scenarioProperty.interestRate = scenario.interestRate
+                        scenarioProperty.annualTaxes = scenario.annualTaxes
+                        scenarioProperty.annualInsurance = scenario.annualInsurance
+                        scenarioProperty.loanTermYears = scenario.termYears
+                        return evaluatedMetricsAndGrade(for: scenarioProperty)
+                    }
+                ) { scenario in
+                    applyMortgageScenario(scenario)
+                }
+            }
+        }
+        .sheet(isPresented: $showingCashToCloseLab) {
+            CashToCloseLabSheet(
+                purchasePrice: activeProperty.purchasePrice,
+                baseline: CashToCloseScenarioValues(
+                    downPaymentPercent: activeProperty.downPaymentPercent ?? 25,
+                    closingCostRate: defaultClosingCostRate,
+                    renoReserve: activeProperty.renoBudget ?? 0
+                ),
+                baselineMetrics: MetricsEngine.computeMetrics(property: activeProperty),
+                baselineGrade: weightedGrade(for: activeProperty),
+                evaluateScenario: { scenario in
+                    var scenarioProperty = activeProperty
+                    scenarioProperty.downPaymentPercent = scenario.downPaymentPercent
+                    scenarioProperty.renoBudget = scenario.renoReserve
+                    return evaluatedMetricsAndGrade(for: scenarioProperty)
+                }
+            ) { scenario in
+                applyCashToCloseScenario(scenario)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showCamera) {
+            CameraPicker { image in
+                Task { await uploadDetailImage(image) }
+            }
+        }
+        .photosPicker(isPresented: $showPhotoLibraryPicker, selection: $selectedPhotoItem, matching: .images)
         .onAppear {
             simpleExpenseRate = String(standardOperatingExpenseRate)
             syncInlineRentRollInputs(from: activeProperty)
-            Task { await fetchMapSnapshot() }
+        }
+        .onChange(of: selectedPhotoItem) { _, newItem in
+            guard let newItem else { return }
+            Task {
+                if let data = try? await newItem.loadTransferable(type: Data.self),
+                   let image = UIImage(data: data) {
+                    await uploadDetailImage(image)
+                }
+            }
         }
         .onChange(of: activeProperty.id) { _, _ in
-            if !isEditingAnalysis {
-                mapSnapshotURL = nil
-                Task { await fetchMapSnapshot() }
-            }
             if !isEditingAnalysis {
                 syncInlineRentRollInputs(from: activeProperty)
             }
@@ -144,6 +220,15 @@ struct PropertyDetailView: View {
         } message: {
             Text(deleteError ?? "Unknown error")
         }
+        .alert("Action failed", isPresented: Binding(get: {
+            exportError != nil
+        }, set: { _ in
+            exportError = nil
+        })) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(exportError ?? "Unknown error")
+        }
         .confirmationDialog("Discard unsaved analysis changes?", isPresented: $showDiscardChangesConfirm, titleVisibility: .visible) {
             Button("Discard Changes", role: .destructive) {
                 isEditingAnalysis = false
@@ -159,10 +244,14 @@ struct PropertyDetailView: View {
                 .font(.system(size: 32, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.richBlack)
 
+            Text(Formatters.currency.string(from: NSNumber(value: activeProperty.purchasePrice)) ?? "$0")
+                .font(.system(.title2, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.richBlack.opacity(0.86))
+
             HStack(spacing: 12) {
                 GradeBadge(grade: weightedGrade, accentColor: Color(hex: activeProfile.colorHex))
                 profilePill
-                UnitTypeBadge(unitCount: activeProperty.rentRoll.count)
+                UnitTypeBadge(unitCount: effectiveUnitCount)
                 if activeProperty.isProvisionalEstimate {
                     Text("Estimate")
                         .font(.system(.caption, design: .rounded).weight(.bold))
@@ -182,7 +271,7 @@ struct PropertyDetailView: View {
                     .frame(width: 36, height: 6)
                 let bedsText = Formatters.bedsBaths.string(from: NSNumber(value: totalBeds)) ?? "\(totalBeds)"
                 let bathsText = Formatters.bedsBaths.string(from: NSNumber(value: totalBaths)) ?? "\(totalBaths)"
-                Text("\(activeProperty.rentRoll.count) units • \(bedsText) Beds • \(bathsText) Baths")
+                Text("\(effectiveUnitCount) units • \(bedsText) Beds • \(bathsText) Baths")
                     .font(.system(.footnote, design: .rounded).weight(.semibold))
                     .foregroundStyle(Color.richBlack.opacity(0.6))
             }
@@ -197,98 +286,29 @@ struct PropertyDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var metricsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Key Metrics")
-                .font(.system(.title3, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack)
-
-            if let metrics = analysisMetrics {
-                let totalOperatingExpenses = expenseModule?.totalOperatingExpenses ?? (activeProperty.operatingExpenses?.reduce(0) { $0 + $1.annualAmount } ?? 0)
-                let capexAdjustedCashFlow = metrics.annualCashFlow - annualizedCapex(for: activeProperty)
-                MetricRow(title: "Net Operating Income", value: Formatters.currency.string(from: NSNumber(value: metrics.netOperatingIncome)) ?? "$0")
-                infoMetricRow(title: "Cap Rate", value: Formatters.percent.string(from: NSNumber(value: metrics.capRate)) ?? "0%", type: .capRate)
-                infoMetricRow(title: "Cash-on-Cash", value: Formatters.percent.string(from: NSNumber(value: metrics.cashOnCash)) ?? "0%", type: .cashOnCash)
-                infoMetricRow(title: "DCR", value: String(format: "%.2f", metrics.debtCoverageRatio), type: .dcr)
-                MetricRow(title: "Annual Cash Flow", value: Formatters.currency.string(from: NSNumber(value: metrics.annualCashFlow)) ?? "$0")
-                if annualizedCapex(for: activeProperty) > 0 {
-                    MetricRow(title: "Stress-Test Cash Flow (After Capex/Reno)", value: Formatters.currency.string(from: NSNumber(value: capexAdjustedCashFlow)) ?? "$0")
-                }
-                cashflowChipRow(for: metrics)
-                MetricRow(title: "Net Cash Flow", value: Formatters.currency.string(from: NSNumber(value: netCashFlow(for: metrics))) ?? "$0")
-                if !(activeProperty.useStandardOperatingExpense ?? true) {
-                    MetricRow(title: "Total Operating Expenses", value: Formatters.currency.string(from: NSNumber(value: totalOperatingExpenses)) ?? "$0")
-                }
-                if usesFallbackRent(for: activeProperty) {
-                    Text("Estimated using default rent (\(Formatters.currency.string(from: NSNumber(value: defaultMonthlyRentPerUnit)) ?? "$0") per unit).")
-                        .font(.system(.caption, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.richBlack.opacity(0.6))
-                }
-            } else {
-                Text("Add financing inputs to calculate metrics.")
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(Color.richBlack.opacity(0.6))
-            }
+    private var mediaActionChipsRow: some View {
+        HStack(spacing: 10) {
+            mapChip
+            photoChip
+            Spacer()
         }
-        .cardStyle()
     }
 
     private var pillarsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Pillars")
-                .font(.system(.title3, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("4 Pillars")
+                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack)
+
+                Text("Tap any pillar for proof and assumptions.")
+                    .font(.system(.footnote, design: .rounded))
+                    .foregroundStyle(Color.richBlack.opacity(0.62))
+            }
 
             if let evaluation = pillarEvaluation {
-                ForEach(evaluation.results, id: \.pillar) { result in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(result.pillar.title)
-                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                                .foregroundStyle(Color.richBlack)
-                            Spacer()
-                            Text(result.status.label)
-                                .font(.system(.caption, design: .rounded).weight(.semibold))
-                                .foregroundStyle(statusColor(for: result.status))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(
-                                    Capsule().fill(statusColor(for: result.status).opacity(0.12))
-                                )
-                        }
-
-                        if result.pillar == .cashFlow, let monthly = result.monthlyValue, let annual = result.annualValue {
-                            HStack(spacing: 16) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Monthly")
-                                        .font(.system(.caption2, design: .rounded).weight(.semibold))
-                                        .foregroundStyle(Color.richBlack.opacity(0.5))
-                                    Text(Formatters.currency.string(from: NSNumber(value: monthly)) ?? "$0")
-                                        .font(.system(.footnote, design: .rounded).weight(.semibold))
-                                        .foregroundStyle(Color.richBlack)
-                                }
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Annual")
-                                        .font(.system(.caption2, design: .rounded).weight(.semibold))
-                                        .foregroundStyle(Color.richBlack.opacity(0.5))
-                                    Text(Formatters.currency.string(from: NSNumber(value: annual)) ?? "$0")
-                                        .font(.system(.footnote, design: .rounded).weight(.semibold))
-                                        .foregroundStyle(Color.richBlack)
-                                }
-                            }
-
-                            if let threshold = result.thresholdValue {
-                                Text("Break-even: \(Formatters.currency.string(from: NSNumber(value: threshold)) ?? "$0")/mo")
-                                    .font(.system(.caption, design: .rounded))
-                                    .foregroundStyle(Color.richBlack.opacity(0.55))
-                            }
-                        }
-
-                        Text(result.detail)
-                            .font(.system(.footnote, design: .rounded))
-                            .foregroundStyle(Color.richBlack.opacity(0.6))
-                    }
-                    .padding(.vertical, 4)
+                PillarHeroRowView(evaluation: evaluation) { selected in
+                    selectedPillarResult = selected
                 }
             } else {
                 Text("Add financing inputs to evaluate the pillars.")
@@ -299,106 +319,15 @@ struct PropertyDetailView: View {
         .cardStyle()
     }
 
-    private var detailsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Property Details")
-                .font(.system(.title3, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack)
-
-            MetricRow(title: "Purchase Price", value: Formatters.currency.string(from: NSNumber(value: activeProperty.purchasePrice)) ?? "$0")
-            MetricRow(title: "Units", value: "\(activeProperty.rentRoll.count)")
-            if let city = activeProperty.city, !city.isEmpty {
-                MetricRow(title: "City", value: city)
-            }
-            if let state = activeProperty.state, !state.isEmpty {
-                MetricRow(title: "State", value: state)
-            }
-            if let zip = activeProperty.zipCode, !zip.isEmpty {
-                MetricRow(title: "ZIP", value: zip)
-            }
-
-            if let downPayment = activeProperty.downPaymentPercent {
-                MetricRow(title: "Down Payment", value: Formatters.percentWhole.string(from: NSNumber(value: downPayment / 100)) ?? "0%")
-            }
-
-            if let interest = activeProperty.interestRate {
-                MetricRow(title: "Interest Rate", value: String(format: "%.2f%%", interest))
-            }
-
-            if let taxes = activeProperty.annualTaxes {
-                MetricRow(title: "Annual Taxes", value: Formatters.currency.string(from: NSNumber(value: taxes)) ?? "$0")
-            }
-            if let insurance = activeProperty.annualInsurance {
-                MetricRow(title: "Annual Insurance", value: Formatters.currency.string(from: NSNumber(value: insurance)) ?? "$0")
-            }
-            if activeProperty.annualTaxes == nil,
-               activeProperty.annualInsurance == nil,
-               let legacy = activeProperty.annualTaxesInsurance {
-                MetricRow(title: "Taxes/Insurance", value: Formatters.currency.string(from: NSNumber(value: legacy)) ?? "$0")
-            }
-            if let term = activeProperty.loanTermYears {
-                MetricRow(title: "Loan Term", value: "\(term) years")
-            }
-            if let reno = activeProperty.renoBudget, reno > 0 {
-                MetricRow(title: "Reno Budget", value: Formatters.currency.string(from: NSNumber(value: reno)) ?? "$0")
-            }
-            let capexTotal = (activeProperty.capexItems ?? []).reduce(0) { $0 + $1.annualAmount }
-            if capexTotal > 0 {
-                MetricRow(title: "Annual Capex", value: Formatters.currency.string(from: NSNumber(value: capexTotal)) ?? "$0")
-            }
-            if let completeness = activeProperty.analysisCompleteness {
-                MetricRow(title: "Analysis Status", value: completeness.replacingOccurrences(of: "_", with: " ").capitalized)
-            }
-        }
-        .cardStyle()
-    }
     private var mortgageSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Mortgage Estimator")
-                        .font(.system(.title3, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.richBlack)
-                    Text("Payment mix and monthly impact")
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundStyle(Color.richBlack.opacity(0.6))
-                }
-                Spacer()
-                if let breakdown = mortgageBreakdown {
-                    Text("$\(Formatters.currency.string(from: NSNumber(value: breakdown.monthlyTotal)) ?? "$0")")
-                        .font(.system(.subheadline, design: .rounded).weight(.bold))
-                        .foregroundStyle(Color.richBlack)
-                }
-            }
-
             if let breakdown = mortgageBreakdown {
-                VStack(spacing: 12) {
-                    Picker("Term", selection: $termOverride) {
-                        Text("15").tag(Optional(15))
-                        Text("20").tag(Optional(20))
-                        Text("30").tag(Optional(30))
-                    }
-                    .pickerStyle(.segmented)
-
-                    MortgageDonutChart(breakdown: breakdown)
-                        .frame(height: 210)
-
-                    VStack(spacing: 10) {
-                        mortgageLine(title: "Principal & Interest", value: breakdown.monthlyPrincipal + breakdown.monthlyInterest, tint: Color.primaryYellow)
-                        mortgageLine(title: "Taxes", value: breakdown.monthlyTaxes, tint: Color.softGray)
-                        mortgageLine(title: "Insurance", value: breakdown.monthlyInsurance, tint: Color.softGray.opacity(0.7))
-                    }
-
-                    HStack {
-                        Text("Monthly Total")
-                            .font(.system(.footnote, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.richBlack.opacity(0.6))
-                        Spacer()
-                        Text(Formatters.currency.string(from: NSNumber(value: breakdown.monthlyTotal)) ?? "$0")
-                            .font(.system(.subheadline, design: .rounded).weight(.bold))
-                            .foregroundStyle(Color.richBlack)
-                    }
-                    .padding(.top, 6)
+                MortgageHeroCardView(
+                    breakdown: breakdown,
+                    termSelection: $termOverride,
+                    defaultTerm: activeProperty.loanTermYears ?? 30
+                ) {
+                    showingMortgageDetails = true
                 }
             } else {
                 Text("Add purchase price, rate, down payment, taxes, insurance, and loan term.")
@@ -409,19 +338,75 @@ struct PropertyDetailView: View {
         .cardStyle()
     }
 
-    private func mortgageLine(title: String, value: Double, tint: Color) -> some View {
-        HStack(spacing: 10) {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(tint)
-                .frame(width: 28, height: 8)
-            Text(title)
-                .font(.system(.footnote, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack.opacity(0.7))
-            Spacer()
-            Text(Formatters.currency.string(from: NSNumber(value: value)) ?? "$0")
-                .font(.system(.footnote, design: .rounded).weight(.bold))
-                .foregroundStyle(Color.richBlack)
+    private var cashToCloseSection: some View {
+        Button {
+            showingCashToCloseLab = true
+        } label: {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Cash to Close")
+                            .font(.system(.title3, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.richBlack)
+                        Text("Upfront capital needed. Tap to run scenarios.")
+                            .font(.system(.footnote, design: .rounded))
+                            .foregroundStyle(Color.richBlack.opacity(0.62))
+                    }
+                    Spacer()
+                    HStack(spacing: 6) {
+                        Image(systemName: "slider.horizontal.3")
+                        Text("Lab")
+                            .font(.system(.caption, design: .rounded).weight(.bold))
+                    }
+                    .foregroundStyle(Color.richBlack.opacity(0.65))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.primaryYellow.opacity(0.35))
+                    )
+                }
+
+                if let cashToClose = cashToCloseBreakdown {
+                    VStack(spacing: 10) {
+                        HStack(spacing: 10) {
+                            summaryTileContent(
+                                title: "Down Payment",
+                                value: Formatters.currency.string(from: NSNumber(value: cashToClose.downPayment)) ?? "$0",
+                                showsInfo: false
+                            )
+                            summaryTileContent(
+                                title: "Closing Costs",
+                                value: Formatters.currency.string(from: NSNumber(value: cashToClose.closingCosts)) ?? "$0",
+                                showsInfo: false
+                            )
+                        }
+                        HStack(spacing: 10) {
+                            summaryTileContent(
+                                title: "Reno Reserve",
+                                value: Formatters.currency.string(from: NSNumber(value: cashToClose.renoReserve)) ?? "$0",
+                                showsInfo: false
+                            )
+                            summaryTileContent(
+                                title: "Total Cash Needed",
+                                value: Formatters.currency.string(from: NSNumber(value: cashToClose.total)) ?? "$0",
+                                showsInfo: false
+                            )
+                        }
+                    }
+
+                    Text("Closing cost estimate uses \(String(format: "%.2f", defaultClosingCostRate))% of purchase price.")
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.58))
+                } else {
+                    Text("Add down payment % to calculate cash to close.")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.6))
+                }
+            }
         }
+        .buttonStyle(.plain)
+        .cardStyle()
     }
 
     private var rentRollSection: some View {
@@ -453,6 +438,12 @@ struct PropertyDetailView: View {
                 inlineRentRollIsValid = valid
             }
 
+            scenarioImpactView(
+                title: "Rent Roll Impact",
+                scenarioProperty: inlineRentDraftProperty,
+                emptyText: "Enter rent in at least one unit to preview grade impact."
+            )
+
             HStack {
                 if inlineRentRollIsSaving {
                     ProgressView()
@@ -482,149 +473,161 @@ struct PropertyDetailView: View {
 
     private var operatingExpenseSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Operating Expenses")
-                .font(.system(.title3, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack)
-
-            if activeProperty.useStandardOperatingExpense ?? true {
-                let rate = activeProperty.operatingExpenseRate ?? standardOperatingExpenseRate
-                MetricRow(title: "Standard Expense Rate", value: String(format: "%.2f%%", rate))
-            } else if let expenses = activeProperty.operatingExpenses, !expenses.isEmpty {
-                ForEach(expenses, id: \.id) { item in
-                    HStack {
-                        Text(item.name.isEmpty ? "Expense" : item.name)
-                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        Spacer()
-                        Text(Formatters.currency.string(from: NSNumber(value: item.annualAmount)) ?? "$0")
-                            .font(.system(.subheadline, design: .rounded).weight(.bold))
+            HStack {
+                Text("Operating Expenses")
+                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack)
+                Spacer()
+                if !isEditingAnalysis {
+                    Button(isEditingExpenses ? "Cancel" : "Edit") {
+                        if isEditingExpenses {
+                            isEditingExpenses = false
+                            expenseSaveError = nil
+                        } else {
+                            beginExpenseEdit()
+                        }
                     }
-                    .padding(.vertical, 6)
+                    .font(.system(.caption, design: .rounded).weight(.bold))
+                    .foregroundStyle(Color.richBlack)
                 }
-                let total = expenses.reduce(0) { $0 + $1.annualAmount }
-                MetricRow(title: "Total Operating Expenses", value: Formatters.currency.string(from: NSNumber(value: total)) ?? "$0")
-            } else if let module = expenseModule {
-                MetricRow(title: "Total Operating Expenses", value: Formatters.currency.string(from: NSNumber(value: module.totalOperatingExpenses)) ?? "$0")
+            }
+
+            if isEditingExpenses {
+                ExpenseModuleView(
+                    module: expenseModule,
+                    annualCashFlow: expenseScenarioEvaluation.metrics?.annualCashFlow,
+                    mode: $expenseMode,
+                    simpleRate: $simpleExpenseRate,
+                    annualTaxes: $annualTaxes,
+                    annualInsurance: $annualInsurance,
+                    managementFee: $managementFee,
+                    maintenanceReserves: $maintenanceReserves
+                )
+
+                scenarioImpactView(
+                    title: "Expense Impact",
+                    scenarioProperty: expenseDraftProperty,
+                    emptyText: "Edit expense inputs to preview score impact."
+                )
+
+                if let expenseSaveError {
+                    Text(expenseSaveError)
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(.red)
+                }
+
+                Button(isSavingExpenses ? "Saving..." : "Save Expenses") {
+                    Task { await saveExpenseChanges() }
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(isSavingExpenses)
             } else {
-                Text("No operating expense inputs available.")
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(Color.richBlack.opacity(0.6))
+                VStack(spacing: 10) {
+                    if activeProperty.useStandardOperatingExpense ?? true {
+                        let rate = activeProperty.operatingExpenseRate ?? standardOperatingExpenseRate
+                        MetricRow(title: "Simple Mode", value: "Blended \(String(format: "%.2f%%", rate))")
+                    } else if let expenses = activeProperty.operatingExpenses, !expenses.isEmpty {
+                        MetricRow(title: "Detailed Mode", value: "Line-item expenses")
+                        ForEach(expenses, id: \.id) { item in
+                            HStack {
+                                Text(item.name.isEmpty ? "Expense" : item.name)
+                                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                                Spacer()
+                                Text(Formatters.currency.string(from: NSNumber(value: item.annualAmount)) ?? "$0")
+                                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                            }
+                            .padding(.vertical, 6)
+                        }
+                        let total = expenses.reduce(0) { $0 + $1.annualAmount }
+                        MetricRow(title: "Total Operating Expenses", value: Formatters.currency.string(from: NSNumber(value: total)) ?? "$0")
+                    } else if let module = expenseModule {
+                        MetricRow(title: "Total Operating Expenses", value: Formatters.currency.string(from: NSNumber(value: module.totalOperatingExpenses)) ?? "$0")
+                    } else {
+                        Text("No operating expense inputs available.")
+                            .font(.system(.footnote, design: .rounded))
+                            .foregroundStyle(Color.richBlack.opacity(0.6))
+                    }
+                }
             }
         }
         .cardStyle()
     }
-    private var locationSection: some View {
+    private var photoChip: some View {
+        Button {
+            showPhotoSourcePopover = true
+        } label: {
+            HStack(spacing: 6) {
+                if isUploadingImage {
+                    ProgressView()
+                        .tint(Color.primaryYellow)
+                        .scaleEffect(0.75)
+                } else {
+                    Image(systemName: activeProperty.imageURL.isEmpty ? "photo" : "photo.fill")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                Text(activeProperty.imageURL.isEmpty ? "Add Photo" : "Update Photo")
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+            }
+            .foregroundStyle(Color.richBlack)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.softGray)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Update property photo")
+        .popover(isPresented: $showPhotoSourcePopover, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    showPhotoSourcePopover = false
+                    showPhotoLibraryPicker = true
+                } label: {
+                    Label("Photo Library", systemImage: "photo.on.rectangle")
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Button {
+                    showPhotoSourcePopover = false
+                    showCamera = true
+                } label: {
+                    Label("Camera", systemImage: "camera")
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(12)
+            .frame(width: 180)
+            .presentationCompactAdaptation(.none)
+        }
+    }
+
+    private var mapChip: some View {
         Button {
             openInMaps()
         } label: {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Location")
-                        .font(.system(.title3, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.richBlack)
-                    Spacer()
-                    HStack(spacing: 6) {
-                        Image(systemName: "map")
-                        Text("Open Map")
-                            .font(.system(.caption, design: .rounded).weight(.semibold))
-                    }
-                    .foregroundStyle(Color.richBlack.opacity(0.6))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(Color.softGray)
-                    )
-                }
-
-                ZStack(alignment: .bottomLeading) {
-                    if let url = mapSnapshotURL {
-                        AsyncImage(url: url) { phase in
-                            switch phase {
-                            case .success(let image):
-                                image.resizable().scaledToFill()
-                            default:
-                                Color.softGray
-                            }
-                        }
-                    } else {
-                        Color.softGray
-                        VStack(spacing: 6) {
-                            Image(systemName: "map")
-                                .font(.system(size: 22, weight: .semibold))
-                            Text(isLoadingMap ? "Locating..." : "No map preview")
-                                .font(.system(.footnote, design: .rounded))
-                        }
-                        .foregroundStyle(Color.richBlack.opacity(0.6))
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(activeProperty.address)
-                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.richBlack)
-                        if let city = activeProperty.city, let state = activeProperty.state, let zip = activeProperty.zipCode,
-                           !city.isEmpty, !state.isEmpty, !zip.isEmpty {
-                            Text("\(city), \(state) \(zip)")
-                                .font(.system(.caption, design: .rounded))
-                                .foregroundStyle(Color.richBlack.opacity(0.6))
-                        }
-                    }
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.cardSurface.opacity(0.95))
-                            .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 6)
-                    )
-                    .padding(12)
-                }
-                .frame(height: 180)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.black.opacity(0.04), lineWidth: 1)
-                )
-
-                HStack(spacing: 8) {
-                    Image(systemName: "mappin.and.ellipse")
-                    Text(mapCoordinate == nil ? "Tap to locate in Maps" : "Open in Apple Maps")
-                        .font(.system(.footnote, design: .rounded).weight(.semibold))
-                }
-                .foregroundStyle(Color.richBlack.opacity(0.6))
+            HStack(spacing: 6) {
+                Image(systemName: "location.fill")
+                    .font(.system(size: 10, weight: .bold))
+                Text("Map")
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 9, weight: .bold))
             }
+            .foregroundStyle(Color.richBlack)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.softGray)
+            )
         }
         .buttonStyle(.plain)
-        .cardStyle()
-    }
-
-    private var photoSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Photo")
-                .font(.system(.title3, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack)
-
-            ZStack {
-                if let url = URL(string: activeProperty.imageURL), !activeProperty.imageURL.isEmpty {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().scaledToFill()
-                        default:
-                            Color.softGray
-                        }
-                    }
-                } else {
-                    VStack(spacing: 6) {
-                        Image(systemName: "photo")
-                            .font(.system(size: 22, weight: .semibold))
-                        Text("No photo uploaded")
-                            .font(.system(.footnote, design: .rounded))
-                    }
-                    .foregroundStyle(Color.richBlack.opacity(0.6))
-                }
-            }
-            .frame(height: 200)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
-        .cardStyle()
+        .accessibilityLabel("Open in Apple Maps")
     }
     private var summarySection: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -657,19 +660,25 @@ struct PropertyDetailView: View {
                 let monthlyCash = annualCash / 12
                 let noi = metrics.netOperatingIncome
                 let capRate = metrics.capRate
+                let cashOnCash = metrics.cashOnCash
+                let dcr = metrics.debtCoverageRatio
 
                 VStack(spacing: 12) {
                     HStack(spacing: 12) {
-                        summaryTile(title: "Net Operating Income", value: Formatters.currency.string(from: NSNumber(value: noi)) ?? "$0")
-                        summaryTile(title: "Monthly Cash Flow", value: Formatters.currency.string(from: NSNumber(value: monthlyCash)) ?? "$0")
+                        summaryTile(title: "NOI", value: Formatters.currency.string(from: NSNumber(value: noi)) ?? "$0", infoType: .netOperatingIncome)
+                        summaryTile(title: "Monthly Cash Flow", value: Formatters.currency.string(from: NSNumber(value: monthlyCash)) ?? "$0", infoType: .cashFlow)
                     }
                     HStack(spacing: 12) {
                         summaryTile(title: "Annual Cash Flow", value: Formatters.currency.string(from: NSNumber(value: annualCash)) ?? "$0")
-                        summaryTile(title: "Cap Rate", value: Formatters.percent.string(from: NSNumber(value: capRate)) ?? "0%")
+                        summaryTile(title: "Cap Rate", value: Formatters.percent.string(from: NSNumber(value: capRate)) ?? "0%", infoType: .capRate)
+                    }
+                    HStack(spacing: 12) {
+                        summaryTile(title: "Cash-on-Cash", value: Formatters.percent.string(from: NSNumber(value: cashOnCash)) ?? "0%", infoType: .cashOnCash)
+                        summaryTile(title: "DCR", value: String(format: "%.2f", dcr), infoType: .dcr)
                     }
                 }
             } else {
-                Text("Add financing inputs to show NOI, cash flow, and cap rate.")
+                Text("Add financing inputs to show NOI, cash flow, cap rate, cash-on-cash, and DCR.")
                     .font(.system(.footnote, design: .rounded))
                     .foregroundStyle(Color.richBlack.opacity(0.6))
             }
@@ -677,11 +686,33 @@ struct PropertyDetailView: View {
         .cardStyle()
     }
 
-    private func summaryTile(title: String, value: String) -> some View {
+    @ViewBuilder
+    private func summaryTile(title: String, value: String, infoType: MetricInfoType? = nil) -> some View {
+        if let infoType {
+            Button {
+                infoMetric = infoType
+            } label: {
+                summaryTileContent(title: title, value: value, showsInfo: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows metric definition")
+        } else {
+            summaryTileContent(title: title, value: value, showsInfo: false)
+        }
+    }
+
+    private func summaryTileContent(title: String, value: String, showsInfo: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack.opacity(0.6))
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.6))
+                if showsInfo {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.55))
+                }
+            }
             Text(value)
                 .font(.system(.subheadline, design: .rounded).weight(.bold))
                 .foregroundStyle(Color.richBlack)
@@ -720,13 +751,15 @@ struct PropertyDetailView: View {
                 checklistRow("Review expenses", complete: hasReviewedExpenses(for: activeProperty))
             }
 
-            Button(isEditingAnalysis ? "Editing Analysis..." : "Edit Analysis") {
-                beginAnalysisEdit()
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .disabled(isEditingAnalysis)
+            Text("Use inline modules below to update rent, expenses, and strategy assumptions.")
+                .font(.system(.footnote, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack.opacity(0.62))
         }
         .cardStyle()
+    }
+
+    private var shouldShowCompleteAnalysisSection: Bool {
+        !missingAnalysisInputs(for: activeProperty).isEmpty
     }
 
     private func checklistRow(_ title: String, complete: Bool) -> some View {
@@ -875,24 +908,6 @@ struct PropertyDetailView: View {
         .cardStyle()
     }
 
-    private var exportSection: some View {
-        VStack(spacing: 12) {
-            if let exportError {
-                Text(exportError)
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-            }
-
-            Button(isExporting ? "Preparing PDF..." : "Export Deal Summary") {
-                Task { await exportPDF() }
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .disabled(isExporting)
-        }
-        .cardStyle()
-    }
-
     private func exportPDF() async {
         exportError = nil
         isExporting = true
@@ -942,60 +957,6 @@ struct PropertyDetailView: View {
         )
     }
 
-    private func statusColor(for status: PillarStatus) -> Color {
-        switch status {
-        case .met:
-            return Color.primaryYellow
-        case .notMet:
-            return Color.richBlack.opacity(0.5)
-        case .needsInput:
-            return Color.richBlack.opacity(0.35)
-        case .borderline:
-            return Color.primaryYellow.opacity(0.7)
-        }
-    }
-
-    private func netCashFlow(for metrics: DealMetrics) -> Double {
-        return metrics.annualCashFlow
-    }
-
-    @ViewBuilder
-    private func performanceBadge(for metrics: DealMetrics) -> some View {
-        let state = cashflowState(for: metrics.annualCashFlow)
-        Text(state.label)
-            .font(.system(.footnote, design: .rounded).weight(.semibold))
-            .foregroundStyle(Color.richBlack)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(state.color)
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func cashflowChipRow(for metrics: DealMetrics) -> some View {
-        let state = cashflowState(for: metrics.annualCashFlow)
-        return HStack {
-            Text("Monthly Cash Flow")
-                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-            Spacer()
-            Text(Formatters.currency.string(from: NSNumber(value: metrics.annualCashFlow / 12)) ?? "$0")
-                .font(.system(.subheadline, design: .rounded).weight(.bold))
-            Text(state.label)
-                .font(.system(.caption, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(state.color)
-                )
-        }
-        .foregroundStyle(Color.richBlack)
-        .padding(.vertical, 6)
-    }
-
     private func cashflowState(for annualCashflow: Double) -> (label: String, color: Color) {
         if abs(annualCashflow) < cashflowBreakEvenThreshold {
             return ("Break-Even", Color.softGray)
@@ -1004,31 +965,6 @@ struct PropertyDetailView: View {
             return ("Positive", Color.primaryYellow.opacity(0.8))
         }
         return ("Negative", Color.red.opacity(0.2))
-    }
-
-    private func infoMetricRow(title: String, value: String, type: MetricInfoType) -> some View {
-        HStack {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                Button {
-                    infoMetric = type
-                } label: {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.richBlack.opacity(0.7))
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer()
-            Text(value)
-                .font(.system(.subheadline, design: .rounded).weight(.bold))
-        }
-        .foregroundStyle(Color.richBlack)
-        .padding(.vertical, 6)
-        .sheet(item: $infoMetric) { metric in
-            MetricInfoSheet(metric: metric)
-        }
     }
 
     private func beginAnalysisEdit() {
@@ -1081,6 +1017,27 @@ struct PropertyDetailView: View {
         }
         applyRentToAll = ""
         exportError = nil
+    }
+
+    private func beginExpenseEdit() {
+        let source = activeProperty
+        let isStandard = source.useStandardOperatingExpense ?? true
+        expenseMode = isStandard ? .simple : .detailed
+        simpleExpenseRate = String(format: "%.2f", source.operatingExpenseRate ?? standardOperatingExpenseRate)
+        annualTaxes = source.annualTaxes.map { Formatters.currencyTwo.string(from: NSNumber(value: $0)) ?? String($0) } ?? ""
+        annualInsurance = source.annualInsurance.map { Formatters.currencyTwo.string(from: NSNumber(value: $0)) ?? String($0) } ?? ""
+        managementFee = ""
+        maintenanceReserves = ""
+        if let expenses = source.operatingExpenses {
+            if let mgmt = expenses.first(where: { $0.name.localizedCaseInsensitiveContains("management") })?.annualAmount {
+                managementFee = Formatters.currencyTwo.string(from: NSNumber(value: mgmt)) ?? String(mgmt)
+            }
+            if let maint = expenses.first(where: { $0.name.localizedCaseInsensitiveContains("maintenance") || $0.name.localizedCaseInsensitiveContains("repair") })?.annualAmount {
+                maintenanceReserves = Formatters.currencyTwo.string(from: NSNumber(value: maint)) ?? String(maint)
+            }
+        }
+        expenseSaveError = nil
+        isEditingExpenses = true
     }
 
     private func syncInlineRentRollInputs(from property: Property) {
@@ -1187,6 +1144,31 @@ struct PropertyDetailView: View {
         )
     }
 
+    private var expenseDraftProperty: Property {
+        var property = activeProperty
+        property.useStandardOperatingExpense = expenseMode == .simple
+        property.operatingExpenseRate = Double(simpleExpenseRate) ?? standardOperatingExpenseRate
+        property.operatingExpenses = expenseMode == .detailed ? [
+            OperatingExpenseItem(name: "Management Fee", annualAmount: expenseModule?.effectiveManagementFee ?? 0),
+            OperatingExpenseItem(name: "Maintenance Reserves", annualAmount: expenseModule?.effectiveMaintenanceReserves ?? 0)
+        ] : []
+        property.annualTaxes = InputFormatters.parseCurrency(annualTaxes) ?? property.annualTaxes
+        property.annualInsurance = InputFormatters.parseCurrency(annualInsurance) ?? property.annualInsurance
+        return property
+    }
+
+    private var inlineRentDraftProperty: Property? {
+        let units = RentRollEditorView.validUnits(from: inlineRentRollInputs)
+        guard !units.isEmpty else { return nil }
+        var property = activeProperty
+        property.rentRoll = units
+        return property
+    }
+
+    private var expenseScenarioEvaluation: (metrics: DealMetrics?, grade: Grade) {
+        evaluatedMetricsAndGrade(for: expenseDraftProperty)
+    }
+
     private var analysisMetrics: DealMetrics? {
         if isEditingAnalysis {
             guard let draft = draftProperty else { return nil }
@@ -1282,6 +1264,37 @@ struct PropertyDetailView: View {
         }
     }
 
+    private func saveExpenseChanges() async {
+        guard let propertyId = activeProperty.id,
+              let index = propertyStore.properties.firstIndex(where: { $0.id == propertyId }) else {
+            expenseSaveError = "Property not found. Reload and try again."
+            return
+        }
+
+        isSavingExpenses = true
+        defer { isSavingExpenses = false }
+
+        var updated = propertyStore.properties[index]
+        updated.useStandardOperatingExpense = expenseMode == .simple
+        updated.operatingExpenseRate = Double(simpleExpenseRate) ?? standardOperatingExpenseRate
+        updated.operatingExpenses = expenseMode == .detailed ? [
+            OperatingExpenseItem(name: "Management Fee", annualAmount: expenseModule?.effectiveManagementFee ?? 0),
+            OperatingExpenseItem(name: "Maintenance Reserves", annualAmount: expenseModule?.effectiveMaintenanceReserves ?? 0)
+        ] : []
+        updated.annualTaxes = InputFormatters.parseCurrency(annualTaxes)
+        updated.annualInsurance = InputFormatters.parseCurrency(annualInsurance)
+        updated.missingAnalysisInputs = missingAnalysisInputs(for: updated)
+        updated.analysisCompleteness = analysisCompletenessState(for: updated).rawValue
+
+        do {
+            try await propertyStore.updateProperty(updated)
+            isEditingExpenses = false
+            expenseSaveError = nil
+        } catch {
+            expenseSaveError = error.localizedDescription
+        }
+    }
+
     private func deleteProperty() async {
         do {
             try await propertyStore.deleteProperty(activeProperty)
@@ -1292,40 +1305,44 @@ struct PropertyDetailView: View {
         }
     }
 
-    @MainActor
-
     private func openInMaps() {
-        guard let coordinate = mapCoordinate else { return }
-        let placemark = MKPlacemark(coordinate: coordinate)
-        let mapItem = MKMapItem(placemark: placemark)
-        mapItem.name = activeProperty.address
-        mapItem.openInMaps(launchOptions: [
-            MKLaunchOptionsMapCenterKey: NSValue(mkCoordinate: coordinate),
-            MKLaunchOptionsMapSpanKey: NSValue(mkCoordinateSpan: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01))
-        ])
+        let target = fullAddress.isEmpty ? activeProperty.address : fullAddress
+        guard let encoded = target.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "http://maps.apple.com/?q=\(encoded)") else {
+            return
+        }
+        UIApplication.shared.open(url)
     }
 
-    private func fetchMapSnapshot() async {
-        if mapSnapshotURL != nil { return }
-        let addressParts = [activeProperty.address, activeProperty.city, activeProperty.state, activeProperty.zipCode]
-            .compactMap { $0 }
-            .filter { !$0.isEmpty }
-        let fullAddress = addressParts.joined(separator: ", ")
-        guard !fullAddress.isEmpty else { return }
+    @MainActor
+    private func uploadDetailImage(_ image: UIImage) async {
+        photoUploadError = nil
+        isUploadingImage = true
+        defer { isUploadingImage = false }
 
-        isLoadingMap = true
-        let geocoder = CLGeocoder()
-        do {
-            let placemarks = try await geocoder.geocodeAddressString(fullAddress)
-            if let coordinate = placemarks.first?.location?.coordinate {
-                mapCoordinate = coordinate
-                let url = try await MapSnapshotService.snapshotURL(for: coordinate, title: activeProperty.address)
-                mapSnapshotURL = url
-            }
-        } catch {
-            mapSnapshotURL = nil
+        guard let propertyId = activeProperty.id,
+              let index = propertyStore.properties.firstIndex(where: { $0.id == propertyId }) else {
+            photoUploadError = "Property not found. Reload and try again."
+            return
         }
-        isLoadingMap = false
+
+        do {
+            let uploaded = try await ImageUploadService.uploadPropertyImage(image, propertyId: propertyId)
+            var updated = propertyStore.properties[index]
+            updated.imagePath = uploaded.path
+            updated.imageURL = uploaded.signedURL.absoluteString
+            try await propertyStore.updateProperty(updated)
+        } catch {
+            photoUploadError = error.localizedDescription
+        }
+    }
+
+    private var fullAddress: String {
+        [activeProperty.address, activeProperty.city, activeProperty.state, activeProperty.zipCode]
+            .compactMap { $0 }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
     }
 
     private func usesFallbackRent(for property: Property) -> Bool {
@@ -1342,7 +1359,13 @@ struct PropertyDetailView: View {
     }
 
     private func hasReviewedExpenses(for property: Property) -> Bool {
-        !(property.useStandardOperatingExpense ?? true)
+        let isSimpleMode = property.useStandardOperatingExpense ?? true
+        if !isSimpleMode { return true } // detailed mode explicitly reviewed
+
+        let hasSimpleRate = (property.operatingExpenseRate ?? 0) > 0
+        let hasTaxes = (property.annualTaxes ?? 0) > 0 || (property.annualTaxesInsurance ?? 0) > 0
+        let hasInsurance = (property.annualInsurance ?? 0) > 0
+        return hasSimpleRate || hasTaxes || hasInsurance
     }
 
     private func missingAnalysisInputs(for property: Property) -> [String] {
@@ -1379,32 +1402,23 @@ struct PropertyDetailView: View {
     }
 
     private var weightedGrade: Grade {
-        guard let metrics = analysisMetrics,
-              let downPayment = activeProperty.downPaymentPercent,
-              let interestRate = activeProperty.interestRate,
-              let breakdown = MetricsEngine.mortgageBreakdown(
-                purchasePrice: activeProperty.purchasePrice,
-                downPaymentPercent: downPayment,
-                interestRate: interestRate,
-                loanTermYears: Double(activeProperty.loanTermYears ?? 30),
-                annualTaxes: activeProperty.annualTaxes ?? (activeProperty.annualTaxesInsurance ?? 0),
-                annualInsurance: activeProperty.annualInsurance ?? 0
-              ) else {
-            return analysisMetrics?.grade ?? .dOrF
-        }
-        let profile = gradeProfileStore.effectiveProfile(for: activeProperty)
-        return MetricsEngine.weightedGrade(
-            metrics: metrics,
-            purchasePrice: activeProperty.purchasePrice,
-            annualPrincipalPaydown: breakdown.annualPrincipal,
-            appreciationRate: activeProperty.appreciationRate ?? 0,
-            cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,
-            profile: profile
-        )
+        weightedGrade(for: activeProperty)
     }
 
     private var activeProfile: GradeProfile {
         gradeProfileStore.effectiveProfile(for: activeProperty)
+    }
+
+    private func pillarSheetHeight(for result: PillarResult) -> CGFloat {
+        var height: CGFloat = 300
+        if result.pillar == .cashFlow {
+            height += 64
+        }
+        if result.status == .needsInput {
+            height += 34
+        }
+        height += min(CGFloat(result.detail.count) * 0.42, 130)
+        return min(max(height, 300), 520)
     }
 
     private var profilePill: some View {
@@ -1445,6 +1459,45 @@ struct PropertyDetailView: View {
         } catch { }
     }
 
+    private func applyMortgageScenario(_ scenario: MortgageScenarioValues) {
+        guard let propertyId = activeProperty.id,
+              let index = propertyStore.properties.firstIndex(where: { $0.id == propertyId }) else {
+            return
+        }
+
+        termOverride = scenario.termYears
+        propertyStore.properties[index].downPaymentPercent = scenario.downPaymentPercent
+        propertyStore.properties[index].interestRate = scenario.interestRate
+        propertyStore.properties[index].annualTaxes = scenario.annualTaxes
+        propertyStore.properties[index].annualInsurance = scenario.annualInsurance
+        propertyStore.properties[index].loanTermYears = scenario.termYears
+        let updated = propertyStore.properties[index]
+
+        Task {
+            do {
+                try await propertyStore.updateProperty(updated)
+            } catch { }
+        }
+    }
+
+    private func applyCashToCloseScenario(_ scenario: CashToCloseScenarioValues) {
+        defaultClosingCostRate = scenario.closingCostRate
+        guard let propertyId = activeProperty.id,
+              let index = propertyStore.properties.firstIndex(where: { $0.id == propertyId }) else {
+            return
+        }
+
+        propertyStore.properties[index].downPaymentPercent = scenario.downPaymentPercent
+        propertyStore.properties[index].renoBudget = scenario.renoReserve
+        let updated = propertyStore.properties[index]
+
+        Task {
+            do {
+                try await propertyStore.updateProperty(updated)
+            } catch { }
+        }
+    }
+
     private var mortgageBreakdown: MortgageBreakdown? {
         guard let downPayment = activeProperty.downPaymentPercent,
               let interest = activeProperty.interestRate else { return nil }
@@ -1461,12 +1514,190 @@ struct PropertyDetailView: View {
         )
     }
 
+    private var cashToCloseBreakdown: (downPayment: Double, closingCosts: Double, renoReserve: Double, total: Double)? {
+        guard let downPaymentPercent = activeProperty.downPaymentPercent else { return nil }
+        let purchasePrice = activeProperty.purchasePrice
+        let downPayment = max(purchasePrice * (downPaymentPercent / 100.0), 0)
+        let closingCosts = max(purchasePrice * (defaultClosingCostRate / 100.0), 0)
+        let renoReserve = max(activeProperty.renoBudget ?? 0, 0)
+        return (downPayment, closingCosts, renoReserve, downPayment + closingCosts + renoReserve)
+    }
+
     private var totalBeds: Double {
         activeProperty.rentRoll.reduce(0) { $0 + $1.bedrooms }
     }
 
     private var totalBaths: Double {
         activeProperty.rentRoll.reduce(0) { $0 + $1.bathrooms }
+    }
+
+    private func weightedGrade(for property: Property) -> Grade {
+        guard let metrics = MetricsEngine.computeMetrics(property: property),
+              let downPayment = property.downPaymentPercent,
+              let interestRate = property.interestRate,
+              let breakdown = MetricsEngine.mortgageBreakdown(
+                purchasePrice: property.purchasePrice,
+                downPaymentPercent: downPayment,
+                interestRate: interestRate,
+                loanTermYears: Double(property.loanTermYears ?? 30),
+                annualTaxes: property.annualTaxes ?? (property.annualTaxesInsurance ?? 0),
+                annualInsurance: property.annualInsurance ?? 0
+              ) else {
+            return MetricsEngine.computeMetrics(property: property)?.grade ?? .dOrF
+        }
+        let profile = gradeProfileStore.effectiveProfile(for: property)
+        return MetricsEngine.weightedGrade(
+            metrics: metrics,
+            purchasePrice: property.purchasePrice,
+            annualPrincipalPaydown: breakdown.annualPrincipal,
+            appreciationRate: property.appreciationRate ?? 0,
+            cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,
+            profile: profile
+        )
+    }
+
+    private func evaluatedMetricsAndGrade(for property: Property) -> (metrics: DealMetrics?, grade: Grade) {
+        let metrics = MetricsEngine.computeMetrics(property: property)
+        let grade = weightedGrade(for: property)
+        return (metrics, grade)
+    }
+
+    @ViewBuilder
+    private func scenarioImpactView(title: String, scenarioProperty: Property?, emptyText: String) -> some View {
+        let baseline = evaluatedMetricsAndGrade(for: activeProperty)
+        let scenario = scenarioProperty.map { evaluatedMetricsAndGrade(for: $0) }
+
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.richBlack.opacity(0.62))
+
+            if let scenario,
+               let baselineMetrics = baseline.metrics,
+               let scenarioMetrics = scenario.metrics {
+                HStack(spacing: 10) {
+                    gradePill(label: "Current", grade: baseline.grade)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.richBlack.opacity(0.45))
+                    gradePill(label: "Scenario", grade: scenario.grade)
+                    Spacer()
+                    Text(gradeDeltaText(from: baseline.grade, to: scenario.grade))
+                        .font(.system(.caption2, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.richBlack.opacity(0.72))
+                }
+
+                HStack(spacing: 8) {
+                    impactPill(title: "Cash Flow", value: signedCurrency((scenarioMetrics.annualCashFlow - baselineMetrics.annualCashFlow) / 12.0) + "/mo")
+                    impactPill(title: "CoC", value: signedPercent(scenarioMetrics.cashOnCash - baselineMetrics.cashOnCash))
+                    impactPill(title: "DCR", value: signedDecimal(scenarioMetrics.debtCoverageRatio - baselineMetrics.debtCoverageRatio))
+                }
+            } else {
+                Text(emptyText)
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.55))
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.cardSurface)
+        )
+    }
+
+    private func gradePill(label: String, grade: Grade) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(.caption2, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack.opacity(0.58))
+            Text(grade.rawValue)
+                .font(.system(.footnote, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.richBlack)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            Capsule(style: .continuous)
+                .fill(gradeAccent(for: grade).opacity(0.2))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(gradeAccent(for: grade).opacity(0.55), lineWidth: 1)
+        )
+    }
+
+    private func impactPill(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(.caption2, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack.opacity(0.55))
+            Text(value)
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.richBlack)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.softGray)
+        )
+    }
+
+    private func gradeAccent(for grade: Grade) -> Color {
+        switch grade {
+        case .a: return Color.primaryYellow
+        case .b: return Color.green.opacity(0.75)
+        case .c: return Color.orange.opacity(0.8)
+        case .dOrF: return Color.red.opacity(0.75)
+        }
+    }
+
+    private func gradeDeltaText(from baseline: Grade, to scenario: Grade) -> String {
+        let tiers: [Grade: Int] = [.a: 3, .b: 2, .c: 1, .dOrF: 0]
+        let delta = (tiers[scenario] ?? 0) - (tiers[baseline] ?? 0)
+        if delta == 0 { return "No grade change" }
+        return delta > 0 ? "+\(delta) tier" : "\(delta) tier"
+    }
+
+    private func signedPercent(_ value: Double) -> String {
+        let sign = value >= 0 ? "+" : "-"
+        return "\(sign)\(String(format: "%.2f%%", abs(value) * 100.0))"
+    }
+
+    private func signedCurrency(_ value: Double) -> String {
+        let sign = value >= 0 ? "+" : "-"
+        let amount = Formatters.currency.string(from: NSNumber(value: abs(value))) ?? "$0"
+        return "\(sign)\(amount)"
+    }
+
+    private func signedDecimal(_ value: Double) -> String {
+        let sign = value >= 0 ? "+" : "-"
+        return "\(sign)\(String(format: "%.2f", abs(value)))"
+    }
+
+    private var effectiveUnitCount: Int {
+        let parsedHints = activeProperty.rentRoll.compactMap { unitCountHint(from: $0.unitType) }
+        let hintCount = parsedHints.max() ?? 0
+        return max(activeProperty.rentRoll.count, hintCount, 1)
+    }
+
+    private func unitCountHint(from raw: String) -> Int? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !text.isEmpty else { return nil }
+
+        if text.contains("single") { return 1 }
+        if text.contains("duplex") { return 2 }
+        if text.contains("triplex") { return 3 }
+        if text.contains("quad") || text.contains("fourplex") { return 4 }
+        if text.contains("10+") { return 10 }
+        if text.contains("5-10") { return 5 }
+
+        if let match = text.range(of: #"\d+"#, options: .regularExpression) {
+            return Int(text[match])
+        }
+
+        return nil
     }
 }
 
