@@ -1,70 +1,5 @@
 import SwiftUI
 
-enum MetricInfoType: String, Identifiable {
-    case netOperatingIncome
-    case cashFlow
-    case capRate
-    case cashOnCash
-    case dcr
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .netOperatingIncome: return "Net Operating Income (NOI)"
-        case .cashFlow: return "Cash Flow"
-        case .capRate: return "Cap Rate"
-        case .cashOnCash: return "Cash-on-Cash"
-        case .dcr: return "Debt Coverage Ratio (DCR)"
-        }
-    }
-
-    var definition: String {
-        switch self {
-        case .netOperatingIncome:
-            return "Net Operating Income (NOI) is annual rental income after vacancy and operating expenses, before mortgage payments."
-        case .cashFlow:
-            return "Cash flow is the money left over after paying operating expenses and debt service. MultiFlow shows this as monthly and annual views."
-        case .capRate:
-            return "Cap rate measures the relationship between net operating income (NOI) and purchase price. It shows the unlevered return on the property."
-        case .cashOnCash:
-            return "Cash-on-cash return measures annual cash flow divided by the cash invested (down payment). It reflects how hard your cash is working."
-        case .dcr:
-            return "Debt Coverage Ratio (DCR) compares NOI to annual debt service. It shows how comfortably the property covers its mortgage payments."
-        }
-    }
-
-    var importance: String {
-        switch self {
-        case .netOperatingIncome:
-            return "NOI is the foundation for many real-estate metrics. Strong NOI supports better valuation, stronger DCR, and safer financing."
-        case .cashFlow:
-            return "Positive and durable cash flow is core to deal quality because it drives monthly safety, reinvestment capacity, and portfolio resilience."
-        case .capRate:
-            return "Higher cap rates generally mean stronger income relative to price, but must be balanced against risk and market norms."
-        case .cashOnCash:
-            return "A higher cash-on-cash return means more cashflow per dollar invested, which helps compare deals of different sizes."
-        case .dcr:
-            return "Lenders often require a minimum DCR; stronger ratios reduce default risk and improve financing options."
-        }
-    }
-
-    var iconName: String {
-        switch self {
-        case .netOperatingIncome:
-            return "building.2"
-        case .cashFlow:
-            return "chart.line.uptrend.xyaxis"
-        case .capRate:
-            return "percent"
-        case .cashOnCash:
-            return "dollarsign.circle"
-        case .dcr:
-            return "shield.checkerboard"
-        }
-    }
-}
-
 struct MetricInfoSheet: View {
     let metric: MetricInfoType
     @Environment(\.dismiss) private var dismiss
@@ -119,6 +54,24 @@ struct MetricInfoSheet: View {
                                 .foregroundStyle(Color.richBlack.opacity(0.8))
                         }
                         .cardStyle()
+
+                        if let formula = metric.formula, !formula.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Formula")
+                                    .font(.system(.headline, design: .rounded).weight(.semibold))
+                                    .foregroundStyle(Color.richBlack)
+                                Text(formula)
+                                    .font(.system(.body, design: .rounded).weight(.semibold))
+                                    .foregroundStyle(Color.richBlack.opacity(0.85))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color.softGray)
+                                    )
+                            }
+                            .cardStyle()
+                        }
 
                         Button("Done") { dismiss() }
                             .buttonStyle(PrimaryButtonStyle())

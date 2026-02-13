@@ -20,6 +20,7 @@ struct SettingsView: View {
 
                     accountAppearanceSection
                     estimatedDefaultsSection
+                    glossarySection
 
                     Button("Sign Out") {
                         authViewModel.signOut()
@@ -238,6 +239,48 @@ struct SettingsView: View {
             }
         }
         .cardStyle()
+    }
+
+    private var glossarySection: some View {
+        NavigationLink {
+            GlossaryView()
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(Color.primaryYellow.opacity(0.2))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: "book.closed")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.richBlack)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Glossary")
+                        .font(.system(.headline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Text("Common real-estate terms and formulas")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.65))
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.4))
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.cardSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.richBlack.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var header: some View {
