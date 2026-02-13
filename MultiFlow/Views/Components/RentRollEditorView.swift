@@ -13,101 +13,24 @@ struct RentRollEditorView: View {
     var onValidationChange: ((Bool) -> Void)? = nil
 
     @State private var applyRentToAll = ""
+    @State private var expandedUnitIDs: Set<UUID> = []
+    @State private var showSquareFeet = false
 
     private var hasValidRentRow: Bool {
         Self.hasAtLeastOneValidRentRow(units)
     }
 
+    private var rowPadding: CGFloat {
+        style == .compact ? 10 : 12
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Rent Roll")
-                    .font(.system(.headline, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Color.richBlack)
-                Spacer()
-                Button("Add Unit") {
-                    units.append(RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: "", squareFeet: ""))
-                    emitValidation()
-                }
-                .font(.system(.footnote, design: .rounded).weight(.semibold))
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            headerRow
+            quickActionsRow
 
-            HStack(spacing: 8) {
-                LabeledTextField(title: "Apply Rent To All", text: $applyRentToAll, keyboard: .decimalPad)
-                    .onChange(of: applyRentToAll) { _, newValue in
-                        applyRentToAll = InputFormatters.formatCurrencyLive(newValue)
-                    }
-                Button("Apply") {
-                    guard !applyRentToAll.isEmpty else { return }
-                    for index in units.indices {
-                        units[index].monthlyRent = applyRentToAll
-                    }
-                    emitValidation()
-                }
-                .font(.system(.footnote, design: .rounded).weight(.bold))
-                .foregroundStyle(Color.richBlack)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.richBlack.opacity(0.2), lineWidth: 1)
-                )
-            }
-
-            ForEach($units) { $unit in
-                VStack(spacing: 10) {
-                    if allowsUnitType {
-                        LabeledTextField(title: "Unit Type", text: $unit.unitType, keyboard: .default)
-                    }
-
-                    HStack(spacing: 8) {
-                        LabeledTextField(title: "Monthly Rent", text: $unit.monthlyRent, keyboard: .decimalPad)
-                            .onChange(of: unit.monthlyRent) { _, newValue in
-                                unit.monthlyRent = InputFormatters.formatCurrencyLive(newValue)
-                                emitValidation()
-                            }
-
-                        LabeledTextField(title: "SqFt (Optional)", text: $unit.squareFeet, keyboard: .numberPad)
-                            .onChange(of: unit.squareFeet) { _, newValue in
-                                unit.squareFeet = InputFormatters.sanitizeDecimal(newValue)
-                            }
-                    }
-
-                    HStack(spacing: 8) {
-                        LabeledTextField(title: "Beds", text: $unit.bedrooms, keyboard: .numberPad)
-                            .onChange(of: unit.bedrooms) { _, newValue in
-                                unit.bedrooms = InputFormatters.sanitizeDecimal(newValue)
-                            }
-
-                        LabeledTextField(title: "Baths", text: $unit.bathrooms, keyboard: .numberPad)
-                            .onChange(of: unit.bathrooms) { _, newValue in
-                                unit.bathrooms = InputFormatters.sanitizeDecimal(newValue)
-                            }
-                    }
-
-                    if units.count > 1 {
-                        Button("Remove Unit") {
-                            units.removeAll { $0.id == unit.id }
-                            if units.isEmpty {
-                                units = [RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: "", squareFeet: "")]
-                            }
-                            emitValidation()
-                        }
-                        .font(.system(.footnote, design: .rounded).weight(.semibold))
-                        .foregroundStyle(.red)
-                    }
-                }
-                .padding(style == .compact ? 10 : 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.softGray)
-                )
-
-                if unit.id != units.last?.id {
-                    Divider()
-                        .background(Color.richBlack.opacity(0.08))
-                        .padding(.vertical, 4)
-                }
+            ForEach(Array(units.enumerated()), id: \.element.id) { index, unit in
+                unitRow(index: index, unit: unit)
             }
 
             if requiresValidRentRow && !hasValidRentRow {
@@ -122,10 +45,248 @@ struct RentRollEditorView: View {
             if units.isEmpty {
                 units = [RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: "", squareFeet: "")]
             }
+            if let firstID = units.first?.id {
+                expandedUnitIDs.insert(firstID)
+            }
+            showSquareFeet = units.contains { !$0.squareFeet.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             emitValidation()
         }
-        .onChange(of: units) { _, _ in
+        .onChange(of: units) { _, newValue in
+            let currentIDs = Set(newValue.map(\.id))
+            expandedUnitIDs = expandedUnitIDs.intersection(currentIDs)
+            if newValue.count == 1, let firstID = newValue.first?.id {
+                expandedUnitIDs.insert(firstID)
+            }
             emitValidation()
+        }
+    }
+
+    private var headerRow: some View {
+        HStack {
+            Text("Rent Roll")
+                .font(.system(.headline, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack)
+            Spacer()
+            Button {
+                addUnit()
+            } label: {
+                Label("Add Unit", systemImage: "plus")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.richBlack)
+        }
+    }
+
+    private var quickActionsRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.trianglehead.2.clockwise")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.richBlack.opacity(0.58))
+
+            TextField("Apply rent to all", text: $applyRentToAll)
+                .font(.system(.footnote, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack)
+                .keyboardType(.decimalPad)
+                .onChange(of: applyRentToAll) { _, newValue in
+                    
+                    applyRentToAll = InputFormatters.formatCurrencyLive(newValue)
+                }
+
+            Button("Apply") {
+                guard !applyRentToAll.isEmpty else { return }
+                for index in units.indices {
+                    units[index].monthlyRent = applyRentToAll
+                }
+                emitValidation()
+            }
+            .font(.system(.footnote, design: .rounded).weight(.bold))
+            .foregroundStyle(Color.primaryYellow)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.primaryYellow.opacity(0.14))
+            )
+
+            Button(showSquareFeet ? "Hide SqFt" : "+ SqFt") {
+                showSquareFeet.toggle()
+            }
+            .font(.system(.caption, design: .rounded).weight(.bold))
+            .foregroundStyle(Color.richBlack.opacity(0.72))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.softGray)
+            )
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.cardSurface)
+        )
+    }
+
+    private func unitRow(index: Int, unit: RentUnitInput) -> some View {
+        let isExpanded = expandedUnitIDs.contains(unit.id)
+        let title = unit.unitType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Unit \(index + 1)" : unit.unitType
+
+        return VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                        .lineLimit(1)
+                    Text(isExpanded ? "Details expanded" : "Tap arrow for details")
+                        .font(.system(.caption2, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.5))
+                }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Rent")
+                        .font(.system(.caption2, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.55))
+                    TextField("$0", text: Binding(
+                        get: { units[safe: index]?.monthlyRent ?? "" },
+                        set: { newValue in
+                            guard units.indices.contains(index) else { return }
+                            units[index].monthlyRent = InputFormatters.formatCurrencyLive(newValue)
+                            emitValidation()
+                        }
+                    ))
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 110)
+                    .keyboardType(.decimalPad)
+                }
+
+                Button {
+                    toggleExpand(id: unit.id)
+                } label: {
+                    Image(systemName: isExpanded ? "chevron.up.circle.fill" : "chevron.down.circle.fill")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.65))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if isExpanded {
+                VStack(spacing: 8) {
+                    if allowsUnitType {
+                        compactField(title: "Label", text: Binding(
+                            get: { units[safe: index]?.unitType ?? "" },
+                            set: { newValue in
+                                guard units.indices.contains(index) else { return }
+                                units[index].unitType = newValue
+                            }
+                        ), keyboard: .default)
+                    }
+
+                    HStack(spacing: 8) {
+                        compactField(title: "Beds", text: Binding(
+                            get: { units[safe: index]?.bedrooms ?? "" },
+                            set: { newValue in
+                                guard units.indices.contains(index) else { return }
+                                units[index].bedrooms = InputFormatters.sanitizeDecimal(newValue)
+                            }
+                        ), keyboard: .numberPad)
+
+                        compactField(title: "Baths", text: Binding(
+                            get: { units[safe: index]?.bathrooms ?? "" },
+                            set: { newValue in
+                                guard units.indices.contains(index) else { return }
+                                units[index].bathrooms = InputFormatters.sanitizeDecimal(newValue)
+                            }
+                        ), keyboard: .numberPad)
+
+                        if showSquareFeet {
+                            compactField(title: "SqFt", text: Binding(
+                                get: { units[safe: index]?.squareFeet ?? "" },
+                                set: { newValue in
+                                    guard units.indices.contains(index) else { return }
+                                    units[index].squareFeet = InputFormatters.sanitizeDecimal(newValue)
+                                }
+                            ), keyboard: .numberPad)
+                        }
+                    }
+
+                    if units.count > 1 {
+                        HStack {
+                            Spacer()
+                            Button {
+                                removeUnit(id: unit.id)
+                            } label: {
+                                Label("Remove Unit", systemImage: "trash")
+                                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.red)
+                        }
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(rowPadding)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.softGray)
+        )
+        .animation(.easeInOut(duration: 0.2), value: isExpanded)
+    }
+
+    private func compactField(title: String, text: Binding<String>, keyboard: UIKeyboardType) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(.caption2, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack.opacity(0.56))
+            TextField("", text: text)
+                .font(.system(.footnote, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack)
+                .keyboardType(keyboard)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.canvasWhite)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.richBlack.opacity(0.1), lineWidth: 1)
+                )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func addUnit() {
+        let newUnit = RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: "", squareFeet: "")
+        units.append(newUnit)
+        expandedUnitIDs.insert(newUnit.id)
+        emitValidation()
+    }
+
+    private func removeUnit(id: UUID) {
+        units.removeAll { $0.id == id }
+        expandedUnitIDs.remove(id)
+        if units.isEmpty {
+            let fallback = RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: "", squareFeet: "")
+            units = [fallback]
+            expandedUnitIDs.insert(fallback.id)
+        }
+        emitValidation()
+    }
+
+    private func toggleExpand(id: UUID) {
+        if expandedUnitIDs.contains(id) {
+            expandedUnitIDs.remove(id)
+        } else {
+            expandedUnitIDs.insert(id)
         }
     }
 
@@ -158,6 +319,13 @@ extension RentRollEditorView {
                 squareFeet: sqft
             )
         }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        guard indices.contains(index) else { return nil }
+        return self[index]
     }
 }
 

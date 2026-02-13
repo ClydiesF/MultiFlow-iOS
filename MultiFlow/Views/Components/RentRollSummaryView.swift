@@ -32,42 +32,35 @@ struct RentRollSummaryView: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                summaryCell(
-                    title: "Monthly Rent",
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                summaryPill(
+                    title: "Monthly",
                     value: Formatters.currencyTwo.string(from: NSNumber(value: monthlyTotal)) ?? "$0"
                 )
-                summaryCell(
-                    title: "Annual Rent",
+                summaryPill(
+                    title: "Annual",
                     value: Formatters.currencyTwo.string(from: NSNumber(value: annualTotal)) ?? "$0"
                 )
-            }
-
-            HStack(spacing: 12) {
-                summaryCell(
-                    title: "Total Beds",
+                summaryPill(
+                    title: "Beds",
                     value: Formatters.bedsBaths.string(from: NSNumber(value: totalBeds)) ?? "0"
                 )
-                summaryCell(
-                    title: "Total Baths",
+                summaryPill(
+                    title: "Baths",
                     value: Formatters.bedsBaths.string(from: NSNumber(value: totalBaths)) ?? "0"
                 )
-                summaryCell(
-                    title: "Total SqFt",
+                summaryPill(
+                    title: "SqFt",
                     value: totalSquareFeet.map(formattedSquareFeet) ?? "-"
                 )
             }
+            .padding(.horizontal, 1)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.cardSurface)
-        )
     }
 
-    private func summaryCell(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private func summaryPill(title: String, value: String) -> some View {
+        HStack(spacing: 6) {
             Text(title)
                 .font(.system(.caption2, design: .rounded).weight(.semibold))
                 .foregroundStyle(Color.richBlack.opacity(0.55))
@@ -77,11 +70,10 @@ struct RentRollSummaryView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
-        .padding(.vertical, 9)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            Capsule(style: .continuous)
                 .fill(Color.softGray)
         )
     }

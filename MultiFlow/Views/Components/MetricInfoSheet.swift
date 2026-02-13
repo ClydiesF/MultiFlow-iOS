@@ -1,6 +1,8 @@
 import SwiftUI
 
 enum MetricInfoType: String, Identifiable {
+    case netOperatingIncome
+    case cashFlow
     case capRate
     case cashOnCash
     case dcr
@@ -9,6 +11,8 @@ enum MetricInfoType: String, Identifiable {
 
     var title: String {
         switch self {
+        case .netOperatingIncome: return "Net Operating Income (NOI)"
+        case .cashFlow: return "Cash Flow"
         case .capRate: return "Cap Rate"
         case .cashOnCash: return "Cash-on-Cash"
         case .dcr: return "Debt Coverage Ratio (DCR)"
@@ -17,6 +21,10 @@ enum MetricInfoType: String, Identifiable {
 
     var definition: String {
         switch self {
+        case .netOperatingIncome:
+            return "Net Operating Income (NOI) is annual rental income after vacancy and operating expenses, before mortgage payments."
+        case .cashFlow:
+            return "Cash flow is the money left over after paying operating expenses and debt service. MultiFlow shows this as monthly and annual views."
         case .capRate:
             return "Cap rate measures the relationship between net operating income (NOI) and purchase price. It shows the unlevered return on the property."
         case .cashOnCash:
@@ -28,6 +36,10 @@ enum MetricInfoType: String, Identifiable {
 
     var importance: String {
         switch self {
+        case .netOperatingIncome:
+            return "NOI is the foundation for many real-estate metrics. Strong NOI supports better valuation, stronger DCR, and safer financing."
+        case .cashFlow:
+            return "Positive and durable cash flow is core to deal quality because it drives monthly safety, reinvestment capacity, and portfolio resilience."
         case .capRate:
             return "Higher cap rates generally mean stronger income relative to price, but must be balanced against risk and market norms."
         case .cashOnCash:
@@ -39,6 +51,10 @@ enum MetricInfoType: String, Identifiable {
 
     var iconName: String {
         switch self {
+        case .netOperatingIncome:
+            return "building.2"
+        case .cashFlow:
+            return "chart.line.uptrend.xyaxis"
         case .capRate:
             return "percent"
         case .cashOnCash:
