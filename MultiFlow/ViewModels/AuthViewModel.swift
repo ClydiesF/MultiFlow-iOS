@@ -68,9 +68,16 @@ final class AuthViewModel: ObservableObject {
             }
 
             guard let nonce = currentNonce else {
-                authError = "Invalid state: missing login nonce."
+                // Graceful recovery for duplicate completion callbacks.
+                await authService.restoreSession()
+                if let existing = authService.currentUser {
+                    user = existing
+                    return
+                }
+                authError = "Invalid state: missing login nonce. Please try Sign in with Apple again."
                 return
             }
+            currentNonce = nil
 
             guard let tokenData = credential.identityToken,
                   let tokenString = String(data: tokenData, encoding: .utf8) else {
@@ -80,12 +87,16 @@ final class AuthViewModel: ObservableObject {
 
             do {
                 user = try await authService.signInWithApple(idToken: tokenString, nonce: nonce)
-                didCreateAccount = true
+                // Apple only returns email/fullName on first authorization for an app.
+                didCreateAccount = credential.email != nil || credential.fullName != nil
             } catch {
                 authError = error.localizedDescription
             }
 
         case .failure(let error):
+            if let authError = error as? ASAuthorizationError, authError.code == .canceled {
+                return
+            }
             authError = error.localizedDescription
         }
     }
