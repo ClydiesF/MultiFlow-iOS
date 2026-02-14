@@ -143,16 +143,17 @@ struct MetricsEngine {
     static func weightedGrade(
         metrics: DealMetrics,
         purchasePrice: Double,
+        unitCount: Int,
         annualPrincipalPaydown: Double,
         appreciationRate: Double,
         cashflowBreakEvenThreshold: Double,
         profile: GradeProfile
     ) -> Grade {
-        let monthlyCashFlow = metrics.annualCashFlow / 12.0
         let breakEvenAnnual = max(cashflowBreakEvenThreshold, 0) * 12.0
 
         let annualAppreciation = max(purchasePrice * (appreciationRate / 100.0), 0)
         let equityGain = annualPrincipalPaydown + annualAppreciation
+        let noiPerUnit = metrics.netOperatingIncome / Double(max(unitCount, 1))
 
         let cocScore = piecewiseScore(metrics.cashOnCash, points: [
             (0.00, 0), (0.08, 60), (0.12, 85), (0.15, 100)
@@ -171,13 +172,17 @@ struct MetricsEngine {
         let equityScore = piecewiseScore(equityGain / max(purchasePrice, 1), points: [
             (0.00, 0), (0.02, 60), (0.04, 85), (0.06, 100)
         ])
+        let noiScore = piecewiseScore(noiPerUnit, points: [
+            (0, 0), (3_000, 60), (6_000, 85), (10_000, 100)
+        ])
 
-        let w = profile.normalizedWeights
+        let w = profile.activeNormalizedWeights
         let total = cocScore * w.coc +
             dcrScore * w.dcr +
             capScore * w.cap +
             cashFlowScore * w.cashFlow +
-            equityScore * w.equity
+            equityScore * w.equity +
+            noiScore * w.noi
 
         return gradeFromScore(total)
     }

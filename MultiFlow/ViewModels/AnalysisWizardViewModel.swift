@@ -12,6 +12,8 @@ enum AnalysisWizardField: Hashable {
     case state
     case zip
     case taxes
+    case marginalTaxRate
+    case landValuePercent
 }
 
 @MainActor

@@ -64,6 +64,15 @@ final class PropertyStore: ObservableObject {
     func updateProperty(_ property: Property) async throws {
         guard let userId = currentUserId else { throw BackendError.notAuthenticated }
         try await repository.updateProperty(property, userId: userId)
+
+        if let id = property.id,
+           let index = properties.firstIndex(where: { $0.id == id }) {
+            properties[index] = property
+        }
+
+        // Re-fetch so derived fields (e.g. signed image URLs / server-normalized values)
+        // are reflected even if realtime delivery is delayed or unavailable.
+        await reload()
     }
 
     func deleteProperty(_ property: Property) async throws {

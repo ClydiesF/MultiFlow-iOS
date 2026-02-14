@@ -35,14 +35,29 @@ struct SupabaseImageStorageService: ImageStorageServiceProtocol {
         let propertySegment = propertyId ?? UUID().uuidString
         let path = "\(userId)/\(propertySegment)/\(UUID().uuidString).jpg"
 
+        #if DEBUG
+        print("SupabaseImageStorageService.uploadPropertyImage")
+        print("  bucket:", bucket)
+        print("  userId:", userId)
+        print("  propertySegment:", propertySegment)
+        print("  uploadPath:", path)
+        print("  bytes:", data.count)
+        #endif
+
         do {
             try await client.storage
                 .from(bucket)
                 .upload(path, data: data, options: FileOptions(contentType: "image/jpeg", upsert: false))
 
             let signedURL = try await signedURL(for: path)
+            #if DEBUG
+            print("  upload success, signedURL:", signedURL.absoluteString)
+            #endif
             return UploadedImage(path: path, signedURL: signedURL)
         } catch {
+            #if DEBUG
+            print("  upload failed:", error.localizedDescription)
+            #endif
             throw ImageUploadError.unknown(message: error.localizedDescription)
         }
     }
