@@ -67,7 +67,12 @@ final class SupabaseAuthService: AuthServiceProtocol {
             )
         )
 
-        guard let mapped = mappedUser(from: response.user) else {
+        guard client.auth.currentSession != nil else {
+            throw AuthServiceError.sessionNotEstablishedAfterAppleSignIn
+        }
+
+        let resolvedUser = response.user
+        guard let mapped = mappedUser(from: resolvedUser) else {
             throw AuthServiceError.invalidSessionResponse
         }
         currentUser = mapped
@@ -89,6 +94,7 @@ private enum AuthServiceError: LocalizedError {
     case invalidSessionResponse
     case sessionNotEstablishedAfterSignUp
     case sessionNotEstablishedAfterSignIn
+    case sessionNotEstablishedAfterAppleSignIn
 
     var errorDescription: String? {
         switch self {
@@ -98,6 +104,8 @@ private enum AuthServiceError: LocalizedError {
             return "Account created, but no active session was started. Verify your email (if required), then sign in."
         case .sessionNotEstablishedAfterSignIn:
             return "Sign-in succeeded, but no active session was returned. Please sign in again."
+        case .sessionNotEstablishedAfterAppleSignIn:
+            return "Apple sign-in succeeded, but no active session was returned. Please try again."
         }
     }
 }

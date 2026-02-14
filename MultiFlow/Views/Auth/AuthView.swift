@@ -3,11 +3,14 @@ import AuthenticationServices
 
 struct AuthView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
+    @Environment(\.openURL) private var openURL
     @AppStorage("shouldShowOnboarding") private var shouldShowOnboarding = false
     @State private var isLogin = true
     @State private var email = ""
     @State private var password = ""
     @State private var appear = false
+    private let termsURL = URL(string: "https://multiflow.app/terms")
+    private let privacyURL = URL(string: "https://multiflow.app/privacy")
 
     var body: some View {
         ZStack {
@@ -69,6 +72,8 @@ struct AuthView: View {
                     }
                     .font(.system(.footnote, design: .rounded).weight(.semibold))
                     .foregroundStyle(Color.richBlack.opacity(0.7))
+
+                    legalFooter
                 }
                 .padding(24)
                 .opacity(appear ? 1 : 0)
@@ -81,6 +86,12 @@ struct AuthView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 14) {
+            Image("logo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 68, height: 68)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
             Text("MultiFlow")
                 .font(.system(size: 40, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.richBlack)
@@ -99,6 +110,36 @@ struct AuthView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var legalFooter: some View {
+        VStack(spacing: 8) {
+            Text("By continuing, you agree to our Terms & Conditions and Privacy Policy.")
+                .font(.system(.caption2, design: .rounded).weight(.medium))
+                .foregroundStyle(Color.richBlack.opacity(0.58))
+                .multilineTextAlignment(.center)
+
+            HStack(spacing: 14) {
+                Button("Terms & Conditions") {
+                    guard let termsURL else { return }
+                    openURL(termsURL)
+                }
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.richBlack)
+
+                Circle()
+                    .fill(Color.richBlack.opacity(0.28))
+                    .frame(width: 4, height: 4)
+
+                Button("Privacy Policy") {
+                    guard let privacyURL else { return }
+                    openURL(privacyURL)
+                }
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.richBlack)
+            }
+        }
+        .padding(.top, 4)
     }
 }
 
