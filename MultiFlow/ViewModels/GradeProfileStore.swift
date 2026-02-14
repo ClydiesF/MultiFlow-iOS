@@ -47,6 +47,10 @@ final class GradeProfileStore: ObservableObject {
     func addProfile(_ profile: GradeProfile) async throws {
         guard let userId = currentUserId else { throw BackendError.notAuthenticated }
         let id = try await repository.addProfile(profile, userId: userId)
+        var inserted = profile
+        inserted.id = id
+        inserted.userId = userId
+        profiles.append(inserted)
         if defaultProfileId == nil {
             try await setDefaultProfileId(id)
         }
@@ -55,6 +59,12 @@ final class GradeProfileStore: ObservableObject {
     func updateProfile(_ profile: GradeProfile) async throws {
         guard let userId = currentUserId else { throw BackendError.notAuthenticated }
         try await repository.updateProfile(profile, userId: userId)
+        guard let id = profile.id else { return }
+        if let index = profiles.firstIndex(where: { $0.id == id }) {
+            var updated = profile
+            updated.userId = userId
+            profiles[index] = updated
+        }
     }
 
     func deleteProfile(_ profile: GradeProfile) async throws {
@@ -62,6 +72,7 @@ final class GradeProfileStore: ObservableObject {
         guard let id = profile.id else { return }
 
         try await repository.deleteProfile(id: id, userId: userId)
+        profiles.removeAll { $0.id == id }
 
         if id == defaultProfileId {
             let fallback = profiles.first { $0.id != id }?.id
@@ -76,6 +87,7 @@ final class GradeProfileStore: ObservableObject {
     func setDefaultProfileId(_ id: String?) async throws {
         guard let userId = currentUserId else { throw BackendError.notAuthenticated }
         try await repository.setDefaultProfileId(id, userId: userId)
+        defaultProfileId = id
     }
 
     func effectiveProfile(for property: Property) -> GradeProfile {

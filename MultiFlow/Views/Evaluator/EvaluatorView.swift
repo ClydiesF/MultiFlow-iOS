@@ -702,6 +702,7 @@ struct EvaluatorView: View {
         return MetricsEngine.weightedGrade(
             metrics: metrics,
             purchasePrice: purchasePriceValue,
+            unitCount: max(rentRoll.count, 1),
             annualPrincipalPaydown: breakdown.annualPrincipal,
             appreciationRate: appreciation,
             cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,

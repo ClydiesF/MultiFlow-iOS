@@ -4,9 +4,6 @@ struct SettingsView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @AppStorage("standardOperatingExpenseRate") private var standardOperatingExpenseRate = 35.0
     @AppStorage("cashflowBreakEvenThreshold") private var cashflowBreakEvenThreshold = 500.0
-    @AppStorage("defaultAppreciationRate") private var defaultAppreciationRate = 3.0
-    @AppStorage("defaultMarginalTaxRate") private var defaultMarginalTaxRate = 24.0
-    @AppStorage("defaultLandValuePercent") private var defaultLandValuePercent = 20.0
     @AppStorage("defaultMonthlyRentPerUnit") private var defaultMonthlyRentPerUnit = 1500.0
     @AppStorage("colorSchemePreference") private var colorSchemePreference = 0
 
@@ -79,7 +76,7 @@ struct SettingsView: View {
                     Text("Estimated Defaults")
                         .font(.system(.headline, design: .rounded).weight(.semibold))
                         .foregroundStyle(Color.richBlack)
-                    Text("Used across evaluator assumptions and grading.")
+                    Text("Used by fast add, portfolio health, and scoring.")
                         .font(.system(.footnote, design: .rounded))
                         .foregroundStyle(Color.richBlack.opacity(0.6))
                 }
@@ -169,74 +166,6 @@ struct SettingsView: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Equity & Tax Defaults")
-                    .font(.system(.footnote, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Color.richBlack.opacity(0.7))
-
-                HStack {
-                    TextField("", value: $defaultAppreciationRate, formatter: NumberFormatter())
-                        .keyboardType(.decimalPad)
-                        .textFieldStyle(.plain)
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.softGray)
-                        )
-                        .onChange(of: defaultAppreciationRate) { _, newValue in
-                            let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
-                            if let sanitizedValue = Double(sanitized) {
-                                defaultAppreciationRate = sanitizedValue
-                            }
-                        }
-                    Text("Appreciation %")
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.richBlack.opacity(0.7))
-                }
-
-                HStack {
-                    TextField("", value: $defaultMarginalTaxRate, formatter: NumberFormatter())
-                        .keyboardType(.decimalPad)
-                        .textFieldStyle(.plain)
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.softGray)
-                        )
-                        .onChange(of: defaultMarginalTaxRate) { _, newValue in
-                            let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
-                            if let sanitizedValue = Double(sanitized) {
-                                defaultMarginalTaxRate = sanitizedValue
-                            }
-                        }
-                    Text("Tax Rate %")
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.richBlack.opacity(0.7))
-                }
-
-                HStack {
-                    TextField("", value: $defaultLandValuePercent, formatter: NumberFormatter())
-                        .keyboardType(.decimalPad)
-                        .textFieldStyle(.plain)
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.softGray)
-                        )
-                        .onChange(of: defaultLandValuePercent) { _, newValue in
-                            let sanitized = InputFormatters.sanitizeDecimal(String(newValue))
-                            if let sanitizedValue = Double(sanitized) {
-                                defaultLandValuePercent = sanitizedValue
-                            }
-                        }
-                    Text("Land Value %")
-                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        .foregroundStyle(Color.richBlack.opacity(0.7))
-                }
-            }
         }
         .cardStyle()
     }

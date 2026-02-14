@@ -25,7 +25,6 @@ struct PortfolioView: View {
 
                     portfolioSummarySection
                     summaryDivider
-                    gradeProfilesLink
                     if propertyStore.isLoading {
                         ProgressView()
                             .frame(maxWidth: .infinity)
@@ -33,13 +32,14 @@ struct PortfolioView: View {
                     } else if propertyStore.properties.isEmpty {
                         emptyState
                     } else {
-                        LazyVStack(spacing: 16) {
+                        LazyVStack(spacing: 34) {
                             ForEach(propertyStore.properties) { property in
                                 PropertyCardView(property: property) { updatedOffer in
                                     saveStrategyOffer(updatedOffer, for: property)
                                 } onOpenDetail: {
                                     selectedPropertyForDetail = property
                                 }
+                                .padding(.bottom, 8)
                             }
                         }
                     }
@@ -74,10 +74,26 @@ struct PortfolioView: View {
                 .environmentObject(gradeProfileStore)
         }
         .toolbar {
-            Button {
-                showingAdd = true
-            } label: {
-                Image(systemName: "plus")
+            ToolbarItem(placement: .topBarLeading) {
+                Image("logo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 26)
+                    .accessibilityHidden(true)
+            }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                NavigationLink {
+                    GradeProfilesView()
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+                .accessibilityLabel("Grade profiles")
+
+                Button {
+                    showingAdd = true
+                } label: {
+                    Image(systemName: "plus")
+                }
             }
         }
         .sheet(isPresented: $showingAdd, onDismiss: {
@@ -160,11 +176,12 @@ struct PortfolioView: View {
 
     private var portfolioMetrics: PortfolioMetrics {
         let properties = propertyStore.properties
-        let totalValue = properties.reduce(0) { $0 + $1.purchasePrice }
-        let totalDoors = properties.reduce(0) { $0 + $1.rentRoll.count }
+        let ownedProperties = properties.filter { $0.isOwned == true }
+        let totalValue = ownedProperties.reduce(0) { $0 + $1.purchasePrice }
+        let totalDoors = ownedProperties.reduce(0) { $0 + $1.rentRoll.count }
 
         return PortfolioMetrics(
-            propertyCount: properties.count,
+            propertyCount: ownedProperties.count,
             totalDoors: totalDoors,
             totalValue: totalValue
         )
@@ -226,29 +243,6 @@ struct PortfolioView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var gradeProfilesLink: some View {
-        NavigationLink {
-            GradeProfilesView()
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "slider.horizontal.3")
-                Text("Grade Profiles")
-                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-            }
-            .foregroundStyle(Color.richBlack)
-            .padding(.vertical, 10)
-            .padding(.horizontal, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.cardSurface)
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     private var successToast: some View {

@@ -136,6 +136,7 @@ struct PropertyRow: View {
         return MetricsEngine.weightedGrade(
             metrics: metrics,
             purchasePrice: property.purchasePrice,
+            unitCount: max(property.rentRoll.count, 1),
             annualPrincipalPaydown: breakdown.annualPrincipal,
             appreciationRate: property.appreciationRate ?? 0,
             cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,

@@ -116,6 +116,7 @@ private struct PropertyDBRow: Codable {
     let appreciationRate: Double?
     let marginalTaxRate: Double?
     let landValuePercent: Double?
+    let isOwned: Bool?
     let gradeProfileId: String?
     let suggestedOfferPrice: Double?
     let analysisCompleteness: String?
@@ -145,6 +146,7 @@ private struct PropertyDBRow: Codable {
         case appreciationRate = "appreciation_rate"
         case marginalTaxRate = "marginal_tax_rate"
         case landValuePercent = "land_value_percent"
+        case isOwned = "is_owned"
         case gradeProfileId = "grade_profile_id"
         case suggestedOfferPrice = "suggested_offer_price"
         case analysisCompleteness = "analysis_completeness"
@@ -175,6 +177,7 @@ private struct PropertyDBRow: Codable {
         self.appreciationRate = model.appreciationRate
         self.marginalTaxRate = model.marginalTaxRate
         self.landValuePercent = model.landValuePercent
+        self.isOwned = model.isOwned
         self.gradeProfileId = model.gradeProfileId
         self.suggestedOfferPrice = model.suggestedOfferPrice
         self.analysisCompleteness = model.analysisCompleteness
@@ -207,6 +210,7 @@ private struct PropertyDBRow: Codable {
             appreciationRate: appreciationRate,
             marginalTaxRate: marginalTaxRate,
             landValuePercent: landValuePercent,
+            isOwned: isOwned,
             gradeProfileId: gradeProfileId,
             suggestedOfferPrice: suggestedOfferPrice,
             analysisCompleteness: analysisCompleteness,

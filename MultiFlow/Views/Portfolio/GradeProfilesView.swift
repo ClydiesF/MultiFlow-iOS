@@ -1,12 +1,39 @@
 import SwiftUI
 
+private enum GradeProfileApplyScope: String, CaseIterable, Identifiable {
+    case allProperties
+    case provisionalOnly
+    case defaultInheritedOnly
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .allProperties: return "All Properties"
+        case .provisionalOnly: return "Provisional Only"
+        case .defaultInheritedOnly: return "Using Default Only"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .allProperties:
+            return "Apply this profile to every property in your portfolio."
+        case .provisionalOnly:
+            return "Apply only to properties currently marked as estimate/provisional."
+        case .defaultInheritedOnly:
+            return "Apply only to properties inheriting the default profile (no explicit override)."
+        }
+    }
+}
+
 struct GradeProfilesView: View {
     @EnvironmentObject var gradeProfileStore: GradeProfileStore
     @EnvironmentObject var propertyStore: PropertyStore
     @State private var showCreateSheet = false
     @State private var editingProfile: GradeProfile?
     @State private var isSavingDefault = false
-    @State private var showApplyConfirm = false
+    @State private var showApplyScopeDialog = false
     @State private var pendingApplyProfile: GradeProfile?
 
     var body: some View {
@@ -45,18 +72,26 @@ struct GradeProfilesView: View {
             GradeProfileEditorSheet(profile: profile)
                 .environmentObject(gradeProfileStore)
         }
-        .alert("Apply Profile to All Properties?", isPresented: $showApplyConfirm) {
-            Button("Apply", role: .destructive) {
-                if let profile = pendingApplyProfile {
-                    Task { await applyToAll(profile) }
+        .confirmationDialog(
+            "Apply Profile",
+            isPresented: $showApplyScopeDialog,
+            titleVisibility: .visible
+        ) {
+            ForEach(GradeProfileApplyScope.allCases) { scope in
+                Button(scope.title) {
+                    if let profile = pendingApplyProfile {
+                        Task { await apply(profile, scope: scope) }
+                    }
+                    pendingApplyProfile = nil
                 }
-                pendingApplyProfile = nil
             }
             Button("Cancel", role: .cancel) {
                 pendingApplyProfile = nil
             }
         } message: {
-            Text("This will override every property’s grade profile.")
+            if let profile = pendingApplyProfile {
+                Text("Apply \(profile.name) to which properties?")
+            }
         }
         .onAppear {
             gradeProfileStore.listen()
@@ -78,7 +113,7 @@ struct GradeProfilesView: View {
                 Capsule()
                     .fill(Color.primaryYellow)
                     .frame(width: 36, height: 6)
-                Text("Weights that match your strategy.")
+                Text("Weights + criteria toggles per strategy.")
                     .font(.system(.footnote, design: .rounded).weight(.semibold))
                     .foregroundStyle(Color.richBlack.opacity(0.6))
             }
@@ -114,6 +149,7 @@ struct GradeProfilesView: View {
     private func profileCard(_ profile: GradeProfile) -> some View {
         let isDefault = profile.id == gradeProfileStore.defaultProfileId
         let usageCount = propertyUsageCount(for: profile)
+
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Circle()
@@ -135,11 +171,16 @@ struct GradeProfilesView: View {
                 }
             }
 
-            ProfileWeightBar(title: "Cash-on-Cash", value: profile.weightCashOnCash)
-            ProfileWeightBar(title: "DCR", value: profile.weightDcr)
-            ProfileWeightBar(title: "Cap Rate", value: profile.weightCapRate)
-            ProfileWeightBar(title: "Cash Flow", value: profile.weightCashFlow)
-            ProfileWeightBar(title: "Equity Gain", value: profile.weightEquityGain)
+            Text("\(profile.enabledCriteriaCount) of 6 active")
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack.opacity(0.65))
+
+            ProfileWeightBar(title: "Cash-on-Cash", value: profile.weightCashOnCash, isEnabled: profile.enabledCashOnCash)
+            ProfileWeightBar(title: "DCR", value: profile.weightDcr, isEnabled: profile.enabledDcr)
+            ProfileWeightBar(title: "Cap Rate", value: profile.weightCapRate, isEnabled: profile.enabledCapRate)
+            ProfileWeightBar(title: "Cash Flow", value: profile.weightCashFlow, isEnabled: profile.enabledCashFlow)
+            ProfileWeightBar(title: "Equity Gain", value: profile.weightEquityGain, isEnabled: profile.enabledEquityGain)
+            ProfileWeightBar(title: "NOI", value: profile.weightNoi, isEnabled: profile.enabledNoi)
 
             Text(usageCount)
                 .font(.system(.caption, design: .rounded).weight(.semibold))
@@ -168,12 +209,12 @@ struct GradeProfilesView: View {
 
                 Button {
                     pendingApplyProfile = profile
-                    showApplyConfirm = true
+                    showApplyScopeDialog = true
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.system(size: 11, weight: .semibold))
-                        Text("Apply to All")
+                        Text("Apply")
                             .font(.system(.caption, design: .rounded).weight(.semibold))
                     }
                     .foregroundStyle(Color.richBlack)
@@ -185,7 +226,7 @@ struct GradeProfilesView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                
+
                 Spacer()
 
                 Button {
@@ -241,8 +282,20 @@ struct GradeProfilesView: View {
         } catch { }
     }
 
-    private func applyToAll(_ profile: GradeProfile) async {
-        for index in propertyStore.properties.indices {
+    private func apply(_ profile: GradeProfile, scope: GradeProfileApplyScope) async {
+        let targetIndices: [Int] = propertyStore.properties.indices.filter { index in
+            let item = propertyStore.properties[index]
+            switch scope {
+            case .allProperties:
+                return true
+            case .provisionalOnly:
+                return item.isProvisionalEstimate
+            case .defaultInheritedOnly:
+                return item.gradeProfileId == nil
+            }
+        }
+
+        for index in targetIndices {
             var item = propertyStore.properties[index]
             item.gradeProfileId = profile.id
             propertyStore.properties[index] = item
@@ -270,17 +323,18 @@ struct GradeProfilesView: View {
 struct ProfileWeightBar: View {
     let title: String
     let value: Double
+    var isEnabled: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(title)
                     .font(.system(.caption, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Color.richBlack.opacity(0.7))
+                    .foregroundStyle(Color.richBlack.opacity(isEnabled ? 0.7 : 0.45))
                 Spacer()
-                Text(String(format: "%.0f%%", value))
+                Text(isEnabled ? String(format: "%.0f%%", value) : "Off")
                     .font(.system(.caption, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Color.richBlack.opacity(0.7))
+                    .foregroundStyle(Color.richBlack.opacity(isEnabled ? 0.7 : 0.45))
             }
             GeometryReader { proxy in
                 let width = proxy.size.width
@@ -289,8 +343,8 @@ struct ProfileWeightBar: View {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(Color.softGray)
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.primaryYellow)
-                        .frame(width: filled)
+                        .fill(isEnabled ? Color.primaryYellow : Color.richBlack.opacity(0.2))
+                        .frame(width: isEnabled ? filled : 0)
                 }
             }
             .frame(height: 8)
@@ -310,7 +364,24 @@ struct GradeProfileEditorSheet: View {
     @State private var weightCapRate: Double = 20
     @State private var weightCashFlow: Double = 15
     @State private var weightEquityGain: Double = 10
+    @State private var weightNoi: Double = 10
+    @State private var enabledCashOnCash = true
+    @State private var enabledDcr = true
+    @State private var enabledCapRate = true
+    @State private var enabledCashFlow = true
+    @State private var enabledEquityGain = true
+    @State private var enabledNoi = true
     @State private var color: Color = .yellow
+    @State private var formError: String?
+
+    private enum Criterion {
+        case cashOnCash
+        case dcr
+        case capRate
+        case cashFlow
+        case equityGain
+        case noi
+    }
 
     var body: some View {
         NavigationStack {
@@ -322,35 +393,86 @@ struct GradeProfileEditorSheet: View {
                             .foregroundStyle(Color.richBlack.opacity(0.6))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+
                     LabeledTextField(title: "Profile Name", text: $name, keyboard: .default)
 
-                    weightSlider(title: "Cash-on-Cash", value: $weightCashOnCash)
-                    weightSlider(title: "DCR", value: $weightDcr)
-                    weightSlider(title: "Cap Rate", value: $weightCapRate)
-                    weightSlider(title: "Cash Flow", value: $weightCashFlow)
-                    weightSlider(title: "Equity Gain", value: $weightEquityGain)
+                    criteriaRow(
+                        criterion: .cashOnCash,
+                        title: "Cash-on-Cash",
+                        subtitle: "Annual cash flow vs cash invested",
+                        isOn: $enabledCashOnCash,
+                        value: $weightCashOnCash
+                    )
+                    criteriaRow(
+                        criterion: .dcr,
+                        title: "DCR",
+                        subtitle: "NOI coverage of annual debt service",
+                        isOn: $enabledDcr,
+                        value: $weightDcr
+                    )
+                    criteriaRow(
+                        criterion: .capRate,
+                        title: "Cap Rate",
+                        subtitle: "NOI yield relative to purchase price",
+                        isOn: $enabledCapRate,
+                        value: $weightCapRate
+                    )
+                    criteriaRow(
+                        criterion: .cashFlow,
+                        title: "Cash Flow",
+                        subtitle: "Annual cash flow after debt service",
+                        isOn: $enabledCashFlow,
+                        value: $weightCashFlow
+                    )
+                    criteriaRow(
+                        criterion: .equityGain,
+                        title: "Equity Gain",
+                        subtitle: "Principal paydown + appreciation",
+                        isOn: $enabledEquityGain,
+                        value: $weightEquityGain
+                    )
+                    criteriaRow(
+                        criterion: .noi,
+                        title: "NOI",
+                        subtitle: "Annual NOI per unit",
+                        isOn: $enabledNoi,
+                        value: $weightNoi
+                    )
 
-                    HStack {
-                        Text("Profile Color")
-                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Color.richBlack)
-                        Spacer()
-                        ColorPicker("", selection: $color, supportsOpacity: true)
-                            .labelsHidden()
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Profile Color")
+                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                                .foregroundStyle(Color.richBlack)
+                            Spacer()
+                            ColorPicker("", selection: $color, supportsOpacity: true)
+                                .labelsHidden()
+                        }
+
+                        Text("Only enabled criteria affect grade. Active weights are normalized automatically.")
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.richBlack.opacity(0.6))
                     }
                     .cardStyle()
 
-                    let total = weightCashOnCash + weightDcr + weightCapRate + weightCashFlow + weightEquityGain
+                    let activeTotal = activeWeightTotal
                     HStack {
-                        Text("Total Weight")
+                        Text("Active Weight Total")
                             .font(.system(.footnote, design: .rounded).weight(.semibold))
                             .foregroundStyle(Color.richBlack.opacity(0.7))
                         Spacer()
-                        Text(String(format: "%.0f%%", total))
+                        Text(String(format: "%.0f%%", activeTotal))
                             .font(.system(.footnote, design: .rounded).weight(.bold))
                             .foregroundStyle(Color.richBlack)
                     }
                     .padding(.top, 6)
+
+                    if let formError {
+                        Text(formError)
+                            .font(.system(.footnote, design: .rounded).weight(.semibold))
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
                 .padding(24)
             }
@@ -361,28 +483,95 @@ struct GradeProfileEditorSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save") { Task { await save() } }
-                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(!canSave)
                 }
             }
             .onAppear { hydrate() }
         }
     }
 
-    private func weightSlider(title: String, value: Binding<Double>) -> some View {
+    private var canSave: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && hasAtLeastOneEnabledCriterion
+    }
+
+    private var hasAtLeastOneEnabledCriterion: Bool {
+        enabledCashOnCash || enabledDcr || enabledCapRate || enabledCashFlow || enabledEquityGain || enabledNoi
+    }
+
+    private var activeWeightTotal: Double {
+        (enabledCashOnCash ? weightCashOnCash : 0)
+            + (enabledDcr ? weightDcr : 0)
+            + (enabledCapRate ? weightCapRate : 0)
+            + (enabledCashFlow ? weightCashFlow : 0)
+            + (enabledEquityGain ? weightEquityGain : 0)
+            + (enabledNoi ? weightNoi : 0)
+    }
+
+    private func criteriaRow(
+        criterion: Criterion,
+        title: String,
+        subtitle: String,
+        isOn: Binding<Bool>,
+        value: Binding<Double>
+    ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(title)
-                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Color.richBlack)
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Text(subtitle)
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.6))
+                }
                 Spacer()
-                Text(String(format: "%.0f%%", value.wrappedValue))
-                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Color.richBlack.opacity(0.7))
+                Toggle("", isOn: isOn)
+                    .labelsHidden()
+                    .toggleStyle(SwitchToggleStyle(tint: Color.primaryYellow))
+                    .onChange(of: isOn.wrappedValue) { _, _ in
+                        value.wrappedValue = clampedWeight(value.wrappedValue, for: criterion)
+                    }
             }
-            Slider(value: value, in: 0...100, step: 1)
+
+            HStack {
+                Text(isOn.wrappedValue ? String(format: "%.0f%%", value.wrappedValue) : "Off")
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.7))
+                Spacer()
+            }
+
+            Slider(value: sliderBinding(for: criterion, value: value), in: 0...100, step: 1)
                 .tint(Color.primaryYellow)
+                .disabled(!isOn.wrappedValue)
+                .opacity(isOn.wrappedValue ? 1 : 0.45)
         }
         .cardStyle()
+    }
+
+    private func sliderBinding(for criterion: Criterion, value: Binding<Double>) -> Binding<Double> {
+        Binding<Double>(
+            get: { value.wrappedValue },
+            set: { newValue in
+                value.wrappedValue = clampedWeight(newValue, for: criterion)
+            }
+        )
+    }
+
+    private func clampedWeight(_ proposed: Double, for criterion: Criterion) -> Double {
+        let capped = max(0, proposed)
+        let maxAllowed = max(0, 100 - otherActiveWeightTotal(excluding: criterion))
+        return min(capped, maxAllowed)
+    }
+
+    private func otherActiveWeightTotal(excluding criterion: Criterion) -> Double {
+        var total = 0.0
+        if criterion != .cashOnCash, enabledCashOnCash { total += weightCashOnCash }
+        if criterion != .dcr, enabledDcr { total += weightDcr }
+        if criterion != .capRate, enabledCapRate { total += weightCapRate }
+        if criterion != .cashFlow, enabledCashFlow { total += weightCashFlow }
+        if criterion != .equityGain, enabledEquityGain { total += weightEquityGain }
+        if criterion != .noi, enabledNoi { total += weightNoi }
+        return total
     }
 
     private func hydrate() {
@@ -397,11 +586,25 @@ struct GradeProfileEditorSheet: View {
         weightCapRate = profile.weightCapRate
         weightCashFlow = profile.weightCashFlow
         weightEquityGain = profile.weightEquityGain
+        weightNoi = profile.weightNoi
+        enabledCashOnCash = profile.enabledCashOnCash
+        enabledDcr = profile.enabledDcr
+        enabledCapRate = profile.enabledCapRate
+        enabledCashFlow = profile.enabledCashFlow
+        enabledEquityGain = profile.enabledEquityGain
+        enabledNoi = profile.enabledNoi
         color = Color(hex: profile.colorHex)
     }
 
     private func save() async {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard hasAtLeastOneEnabledCriterion else {
+            formError = "Enable at least one criterion to save this profile."
+            return
+        }
+
+        formError = nil
         let newProfile = GradeProfile(
             id: profile?.id,
             name: trimmed,
@@ -410,8 +613,16 @@ struct GradeProfileEditorSheet: View {
             weightCapRate: weightCapRate,
             weightCashFlow: weightCashFlow,
             weightEquityGain: weightEquityGain,
+            weightNoi: weightNoi,
+            enabledCashOnCash: enabledCashOnCash,
+            enabledDcr: enabledDcr,
+            enabledCapRate: enabledCapRate,
+            enabledCashFlow: enabledCashFlow,
+            enabledEquityGain: enabledEquityGain,
+            enabledNoi: enabledNoi,
             colorHex: UIColor(color).hexString
         )
+
         do {
             if profile == nil {
                 try await gradeProfileStore.addProfile(newProfile)
@@ -420,7 +631,7 @@ struct GradeProfileEditorSheet: View {
             }
             dismiss()
         } catch {
-            dismiss()
+            formError = error.localizedDescription
         }
     }
 }
@@ -432,4 +643,3 @@ struct GradeProfileEditorSheet: View {
             .environmentObject(PropertyStore())
     }
 }
-

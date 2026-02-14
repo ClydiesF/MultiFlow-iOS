@@ -6,6 +6,7 @@ struct EditPropertySheet: View {
     @EnvironmentObject var propertyStore: PropertyStore
     @EnvironmentObject var gradeProfileStore: GradeProfileStore
     @AppStorage("standardOperatingExpenseRate") private var standardOperatingExpenseRate = 35.0
+    @AppStorage("cashflowBreakEvenThreshold") private var cashflowBreakEvenThreshold = 500.0
 
     let property: Property
 
@@ -172,6 +173,7 @@ struct EditPropertySheet: View {
                     operatingExpenseSection
 
                     rentRollSection
+                    liveSnapshotSection
 
                     if let errorMessage {
                         Text(errorMessage)
@@ -219,6 +221,40 @@ struct EditPropertySheet: View {
             allowsUnitType: true,
             requiresValidRentRow: true
         )
+    }
+
+    private var liveSnapshotSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Live Snapshot")
+                .font(.system(.headline, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack)
+
+            if let metrics = previewMetrics {
+                let monthlyCash = metrics.annualCashFlow / 12.0
+                HStack(spacing: 12) {
+                    GradeCircleView(grade: previewGrade)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Grade \(previewGrade.rawValue)")
+                            .font(.system(.subheadline, design: .rounded).weight(.bold))
+                            .foregroundStyle(Color.richBlack)
+                        Text("Cash Flow \(Formatters.currency.string(from: NSNumber(value: monthlyCash)) ?? "$0")/mo")
+                            .font(.system(.footnote, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.richBlack.opacity(0.72))
+                    }
+                    Spacer()
+                }
+
+                HStack(spacing: 10) {
+                    MetricRow(title: "Cap Rate", value: Formatters.percent.string(from: NSNumber(value: metrics.capRate)) ?? "0%")
+                    MetricRow(title: "DCR", value: String(format: "%.2f", metrics.debtCoverageRatio))
+                }
+            } else {
+                Text("Enter purchase price, taxes, insurance, and at least one rent value to preview grade.")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.62))
+            }
+        }
+        .cardStyle()
     }
 
 
@@ -380,6 +416,7 @@ struct EditPropertySheet: View {
             loanTermYears: loanTermYears,
             downPaymentPercent: Double(downPaymentPercent),
             interestRate: Double(interestRate),
+            isOwned: property.isOwned,
             gradeProfileId: selectedProfileId ?? gradeProfileStore.defaultProfileId
         )
 
@@ -392,6 +429,76 @@ struct EditPropertySheet: View {
             errorMessage = error.localizedDescription
         }
         isSaving = false
+    }
+
+    private var previewProperty: Property? {
+        guard let purchasePriceValue = InputFormatters.parseCurrency(purchasePrice),
+              let taxesValue = InputFormatters.parseCurrency(annualTaxes),
+              let insuranceValue = InputFormatters.parseCurrency(annualInsurance) else {
+            return nil
+        }
+
+        let rentUnits = RentRollEditorView.validUnits(from: rentRoll)
+        guard !rentUnits.isEmpty else { return nil }
+
+        return Property(
+            id: property.id,
+            userId: property.userId,
+            address: address,
+            city: city.isEmpty ? nil : city,
+            state: state.isEmpty ? nil : state,
+            zipCode: zipCode.isEmpty ? nil : zipCode,
+            imagePath: imagePath,
+            imageURL: imageURL,
+            purchasePrice: purchasePriceValue,
+            rentRoll: rentUnits,
+            useStandardOperatingExpense: useStandardOperatingExpense,
+            operatingExpenseRate: Double(operatingExpenseRate) ?? standardOperatingExpenseRate,
+            operatingExpenses: operatingExpenses.compactMap { item in
+                guard let amount = InputFormatters.parseCurrency(item.annualAmount) else { return nil }
+                return OperatingExpenseItem(name: item.name, annualAmount: amount)
+            },
+            annualTaxes: taxesValue,
+            annualInsurance: insuranceValue,
+            loanTermYears: loanTermYears,
+            downPaymentPercent: Double(downPaymentPercent),
+            interestRate: Double(interestRate),
+            isOwned: property.isOwned,
+            gradeProfileId: selectedProfileId ?? gradeProfileStore.defaultProfileId
+        )
+    }
+
+    private var previewMetrics: DealMetrics? {
+        guard let previewProperty else { return nil }
+        return MetricsEngine.computeMetrics(property: previewProperty)
+    }
+
+    private var previewGrade: Grade {
+        guard let previewProperty,
+              let metrics = previewMetrics,
+              let downPayment = previewProperty.downPaymentPercent,
+              let interestRate = previewProperty.interestRate,
+              let breakdown = MetricsEngine.mortgageBreakdown(
+                purchasePrice: previewProperty.purchasePrice,
+                downPaymentPercent: downPayment,
+                interestRate: interestRate,
+                loanTermYears: Double(previewProperty.loanTermYears ?? 30),
+                annualTaxes: previewProperty.annualTaxes ?? (previewProperty.annualTaxesInsurance ?? 0),
+                annualInsurance: previewProperty.annualInsurance ?? 0
+              ) else {
+            return previewMetrics?.grade ?? .dOrF
+        }
+
+        let profile = gradeProfileStore.effectiveProfile(for: previewProperty)
+        return MetricsEngine.weightedGrade(
+            metrics: metrics,
+            purchasePrice: previewProperty.purchasePrice,
+            unitCount: max(previewProperty.rentRoll.count, 1),
+            annualPrincipalPaydown: breakdown.annualPrincipal,
+            appreciationRate: previewProperty.appreciationRate ?? 0,
+            cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,
+            profile: profile
+        )
     }
 
 }

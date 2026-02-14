@@ -105,12 +105,14 @@ struct ExpenseModuleView: View {
             }
 
             if let cashFlow = annualCashFlow {
+                let monthlyCashFlow = cashFlow / 12.0
+
                 HStack(spacing: 6) {
-                    Text("Cash Flow")
+                    Text("Monthly Cash Flow")
                         .font(.system(.subheadline, design: .rounded).weight(.semibold))
                         .foregroundStyle(ink)
                     Spacer()
-                    Text(Formatters.currency.string(from: NSNumber(value: cashFlow)) ?? "$0")
+                    Text((Formatters.currency.string(from: NSNumber(value: monthlyCashFlow)) ?? "$0") + "/mo")
                         .font(.system(.subheadline, design: .rounded).weight(.bold))
                         .foregroundStyle(ink)
 
@@ -120,6 +122,20 @@ struct ExpenseModuleView: View {
                             .foregroundStyle(Color.primaryYellow)
                     }
                 }
+
+                HStack(spacing: 6) {
+                    Text("Annual Cash Flow")
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(ink.opacity(0.76))
+                    Spacer()
+                    Text((Formatters.currency.string(from: NSNumber(value: cashFlow)) ?? "$0") + "/yr")
+                        .font(.system(.footnote, design: .rounded).weight(.bold))
+                        .foregroundStyle(ink.opacity(0.9))
+                }
+
+                Text("Cash Flow = Rent Revenue - Operating Expenses - Debt Service")
+                    .font(.system(.caption2, design: .rounded).weight(.semibold))
+                    .foregroundStyle(ink.opacity(0.58))
             }
         }
     }

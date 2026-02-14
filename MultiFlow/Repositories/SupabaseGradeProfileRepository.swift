@@ -35,25 +35,49 @@ final class SupabaseGradeProfileRepository: GradeProfileRepositoryProtocol {
 
     func addProfile(_ profile: GradeProfile, userId: String) async throws -> String {
         let row = GradeProfileRow(model: profile, userId: userId)
-        let inserted: GradeProfileRow = try await client
-            .from("profiles")
-            .insert(row)
-            .select()
-            .single()
-            .execute()
-            .value
-        return inserted.id ?? ""
+        do {
+            let inserted: GradeProfileRow = try await client
+                .from("profiles")
+                .insert(row)
+                .select()
+                .single()
+                .execute()
+                .value
+            return inserted.id ?? ""
+        } catch {
+            guard shouldRetryLegacyProfileWrite(error) else { throw error }
+            let legacyRow = LegacyGradeProfileRow(model: profile, userId: userId)
+            let inserted: LegacyGradeProfileRow = try await client
+                .from("profiles")
+                .insert(legacyRow)
+                .select()
+                .single()
+                .execute()
+                .value
+            return inserted.id ?? ""
+        }
     }
 
     func updateProfile(_ profile: GradeProfile, userId: String) async throws {
         guard let id = profile.id else { return }
         let row = GradeProfileRow(model: profile, userId: userId)
-        _ = try await client
-            .from("profiles")
-            .update(row)
-            .eq("id", value: id)
-            .eq("user_id", value: userId)
-            .execute()
+        do {
+            _ = try await client
+                .from("profiles")
+                .update(row)
+                .eq("id", value: id)
+                .eq("user_id", value: userId)
+                .execute()
+        } catch {
+            guard shouldRetryLegacyProfileWrite(error) else { throw error }
+            let legacyRow = LegacyGradeProfileRow(model: profile, userId: userId)
+            _ = try await client
+                .from("profiles")
+                .update(legacyRow)
+                .eq("id", value: id)
+                .eq("user_id", value: userId)
+                .execute()
+        }
     }
 
     func deleteProfile(id: String, userId: String) async throws {
@@ -127,7 +151,128 @@ final class SupabaseGradeProfileRepository: GradeProfileRepositoryProtocol {
     }
 }
 
+private func shouldRetryLegacyProfileWrite(_ error: Error) -> Bool {
+    let message = error.localizedDescription.lowercased()
+    return message.contains("schema cache")
+        || message.contains("could not find")
+        || message.contains("enabled_cap_rate")
+        || message.contains("enabled_cash_on_cash")
+        || message.contains("enabled_dcr")
+        || message.contains("enabled_cash_flow")
+        || message.contains("enabled_equity_gain")
+        || message.contains("enabled_noi")
+        || message.contains("weight_noi")
+}
+
 private struct GradeProfileRow: Codable {
+    let id: String?
+    let userId: String
+    let name: String
+    let weightCashOnCash: Double
+    let weightDcr: Double
+    let weightCapRate: Double
+    let weightCashFlow: Double
+    let weightEquityGain: Double
+    let weightNoi: Double
+    let enabledCashOnCash: Bool
+    let enabledDcr: Bool
+    let enabledCapRate: Bool
+    let enabledCashFlow: Bool
+    let enabledEquityGain: Bool
+    let enabledNoi: Bool
+    let colorHex: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case name
+        case weightCashOnCash = "weight_cash_on_cash"
+        case weightDcr = "weight_dcr"
+        case weightCapRate = "weight_cap_rate"
+        case weightCashFlow = "weight_cash_flow"
+        case weightEquityGain = "weight_equity_gain"
+        case weightNoi = "weight_noi"
+        case enabledCashOnCash = "enabled_cash_on_cash"
+        case enabledDcr = "enabled_dcr"
+        case enabledCapRate = "enabled_cap_rate"
+        case enabledCashFlow = "enabled_cash_flow"
+        case enabledEquityGain = "enabled_equity_gain"
+        case enabledNoi = "enabled_noi"
+        case colorHex = "color_hex"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+        userId = try container.decode(String.self, forKey: .userId)
+        name = try container.decode(String.self, forKey: .name)
+        weightCashOnCash = try container.decode(Double.self, forKey: .weightCashOnCash)
+        weightDcr = try container.decode(Double.self, forKey: .weightDcr)
+        weightCapRate = try container.decode(Double.self, forKey: .weightCapRate)
+        weightCashFlow = try container.decode(Double.self, forKey: .weightCashFlow)
+        weightEquityGain = try container.decode(Double.self, forKey: .weightEquityGain)
+        weightNoi = try container.decodeIfPresent(Double.self, forKey: .weightNoi) ?? 10
+        enabledCashOnCash = try container.decodeIfPresent(Bool.self, forKey: .enabledCashOnCash) ?? true
+        enabledDcr = try container.decodeIfPresent(Bool.self, forKey: .enabledDcr) ?? true
+        enabledCapRate = try container.decodeIfPresent(Bool.self, forKey: .enabledCapRate) ?? true
+        enabledCashFlow = try container.decodeIfPresent(Bool.self, forKey: .enabledCashFlow) ?? true
+        enabledEquityGain = try container.decodeIfPresent(Bool.self, forKey: .enabledEquityGain) ?? true
+        enabledNoi = try container.decodeIfPresent(Bool.self, forKey: .enabledNoi) ?? true
+        colorHex = try container.decode(String.self, forKey: .colorHex)
+    }
+
+    init(model: GradeProfile, userId: String) {
+        self.id = model.id
+        self.userId = userId
+        self.name = model.name
+        self.weightCashOnCash = model.weightCashOnCash
+        self.weightDcr = model.weightDcr
+        self.weightCapRate = model.weightCapRate
+        self.weightCashFlow = model.weightCashFlow
+        self.weightEquityGain = model.weightEquityGain
+        self.weightNoi = model.weightNoi
+        self.enabledCashOnCash = model.enabledCashOnCash
+        self.enabledDcr = model.enabledDcr
+        self.enabledCapRate = model.enabledCapRate
+        self.enabledCashFlow = model.enabledCashFlow
+        self.enabledEquityGain = model.enabledEquityGain
+        self.enabledNoi = model.enabledNoi
+        self.colorHex = model.colorHex
+    }
+
+    func toModel() -> GradeProfile {
+        GradeProfile(
+            id: id,
+            userId: userId,
+            name: name,
+            weightCashOnCash: weightCashOnCash,
+            weightDcr: weightDcr,
+            weightCapRate: weightCapRate,
+            weightCashFlow: weightCashFlow,
+            weightEquityGain: weightEquityGain,
+            weightNoi: weightNoi,
+            enabledCashOnCash: enabledCashOnCash,
+            enabledDcr: enabledDcr,
+            enabledCapRate: enabledCapRate,
+            enabledCashFlow: enabledCashFlow,
+            enabledEquityGain: enabledEquityGain,
+            enabledNoi: enabledNoi,
+            colorHex: colorHex
+        )
+    }
+}
+
+private struct ProfileDefaultRow: Codable {
+    let userId: String
+    let defaultProfileId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case userId = "user_id"
+        case defaultProfileId = "default_profile_id"
+    }
+}
+
+private struct LegacyGradeProfileRow: Codable {
     let id: String?
     let userId: String
     let name: String
@@ -160,29 +305,5 @@ private struct GradeProfileRow: Codable {
         self.weightCashFlow = model.weightCashFlow
         self.weightEquityGain = model.weightEquityGain
         self.colorHex = model.colorHex
-    }
-
-    func toModel() -> GradeProfile {
-        GradeProfile(
-            id: id,
-            userId: userId,
-            name: name,
-            weightCashOnCash: weightCashOnCash,
-            weightDcr: weightDcr,
-            weightCapRate: weightCapRate,
-            weightCashFlow: weightCashFlow,
-            weightEquityGain: weightEquityGain,
-            colorHex: colorHex
-        )
-    }
-}
-
-private struct ProfileDefaultRow: Codable {
-    let userId: String
-    let defaultProfileId: String?
-
-    enum CodingKeys: String, CodingKey {
-        case userId = "user_id"
-        case defaultProfileId = "default_profile_id"
     }
 }

@@ -2,6 +2,8 @@ import SwiftUI
 import UIKit
 
 struct PropertyCardView: View {
+    @EnvironmentObject private var gradeProfileStore: GradeProfileStore
+    @AppStorage("cashflowBreakEvenThreshold") private var cashflowBreakEvenThreshold = 500.0
     let property: Property
     var onUpdateStrategy: ((Double) -> Void)? = nil
     var onOpenDetail: (() -> Void)? = nil
@@ -69,15 +71,15 @@ struct PropertyCardView: View {
                 AsyncImage(url: propertyImageURL) { phase in
                     switch phase {
                     case .empty:
-                        Color.softGray
+                        propertyImagePlaceholder
                     case .success(let image):
                         image
                             .resizable()
                             .scaledToFill()
                     case .failure:
-                        Color.softGray
+                        propertyImagePlaceholder
                     @unknown default:
-                        Color.softGray
+                        propertyImagePlaceholder
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -90,18 +92,38 @@ struct PropertyCardView: View {
                     .padding(14)
             }
             .overlay(alignment: .topLeading) {
-                if property.isProvisionalEstimate {
-                    Text("Estimate")
-                        .font(.system(.caption2, design: .rounded).weight(.bold))
-                        .foregroundStyle(Color.richBlack)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.primaryYellow.opacity(0.88))
-                        )
-                        .padding(14)
+                VStack(alignment: .leading, spacing: 8) {
+                    if property.isProvisionalEstimate {
+                        Text("Estimate")
+                            .font(.system(.caption2, design: .rounded).weight(.bold))
+                            .foregroundStyle(Color.richBlack)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.primaryYellow.opacity(0.88))
+                            )
+                    }
+
+                    ownershipChip
+
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color(hex: activeProfile.colorHex))
+                            .frame(width: 8, height: 8)
+                        Text(activeProfile.name)
+                            .font(.system(.caption2, design: .rounded).weight(.bold))
+                            .foregroundStyle(Color.white.opacity(0.92))
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.black.opacity(0.58))
+                    )
                 }
+                .padding(14)
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -235,13 +257,76 @@ struct PropertyCardView: View {
         return URL(string: property.imageURL)
     }
 
+    private var ownershipChip: some View {
+        let isOwned = property.isOwned == true
+        return HStack(spacing: 6) {
+            Image(systemName: isOwned ? "checkmark.seal.fill" : "clock.badge.exclamationmark")
+                .font(.system(size: 10, weight: .bold))
+            Text(isOwned ? "Owned" : "Prospective")
+                .font(.system(.caption2, design: .rounded).weight(.bold))
+        }
+        .foregroundStyle(Color.white.opacity(0.94))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule(style: .continuous)
+                .fill(isOwned ? Color.green.opacity(0.75) : Color.richBlack.opacity(0.58))
+        )
+    }
+
+    private var propertyImagePlaceholder: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color.softGray, Color.cardSurface],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            VStack(spacing: 8) {
+                Image(systemName: "house.fill")
+                    .font(.system(size: 32, weight: .semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.55))
+                Text("No Photo")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.52))
+            }
+        }
+    }
+
     private var monthlyCashFlow: Double {
         guard let metrics = MetricsEngine.computeMetrics(property: property) else { return 0 }
         return metrics.annualCashFlow / 12.0
     }
 
     private var currentGrade: Grade {
-        MetricsEngine.computeMetrics(property: property)?.grade ?? .dOrF
+        guard let metrics = MetricsEngine.computeMetrics(property: property),
+              let downPayment = property.downPaymentPercent,
+              let interestRate = property.interestRate,
+              let breakdown = MetricsEngine.mortgageBreakdown(
+                purchasePrice: property.purchasePrice,
+                downPaymentPercent: downPayment,
+                interestRate: interestRate,
+                loanTermYears: Double(property.loanTermYears ?? 30),
+                annualTaxes: property.annualTaxes ?? (property.annualTaxesInsurance ?? 0),
+                annualInsurance: property.annualInsurance ?? 0
+              ) else {
+            return MetricsEngine.computeMetrics(property: property)?.grade ?? .dOrF
+        }
+
+        let profile = gradeProfileStore.effectiveProfile(for: property)
+        return MetricsEngine.weightedGrade(
+            metrics: metrics,
+            purchasePrice: property.purchasePrice,
+            unitCount: max(property.rentRoll.count, 1),
+            annualPrincipalPaydown: breakdown.annualPrincipal,
+            appreciationRate: property.appreciationRate ?? 0,
+            cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,
+            profile: profile
+        )
+    }
+
+    private var activeProfile: GradeProfile {
+        gradeProfileStore.effectiveProfile(for: property)
     }
 
     private var maxAllowableOfferValue: Double? {
@@ -355,4 +440,5 @@ struct PropertyCardView: View {
     )
     .padding()
     .background(Color.canvasWhite)
+    .environmentObject(GradeProfileStore())
 }

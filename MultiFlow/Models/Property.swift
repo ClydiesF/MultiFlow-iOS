@@ -23,6 +23,7 @@ struct Property: Identifiable, Codable, Hashable {
     var appreciationRate: Double?
     var marginalTaxRate: Double?
     var landValuePercent: Double?
+    var isOwned: Bool?
     var gradeProfileId: String?
     var suggestedOfferPrice: Double?
     var analysisCompleteness: String?
@@ -52,6 +53,7 @@ struct Property: Identifiable, Codable, Hashable {
         case appreciationRate = "appreciation_rate"
         case marginalTaxRate = "marginal_tax_rate"
         case landValuePercent = "land_value_percent"
+        case isOwned = "is_owned"
         case gradeProfileId = "grade_profile_id"
         case suggestedOfferPrice = "suggested_offer_price"
         case analysisCompleteness = "analysis_completeness"
@@ -83,6 +85,7 @@ struct Property: Identifiable, Codable, Hashable {
         appreciationRate: Double? = nil,
         marginalTaxRate: Double? = nil,
         landValuePercent: Double? = nil,
+        isOwned: Bool? = nil,
         gradeProfileId: String? = nil,
         suggestedOfferPrice: Double? = nil,
         analysisCompleteness: String? = nil,
@@ -112,6 +115,7 @@ struct Property: Identifiable, Codable, Hashable {
         self.appreciationRate = appreciationRate
         self.marginalTaxRate = marginalTaxRate
         self.landValuePercent = landValuePercent
+        self.isOwned = isOwned
         self.gradeProfileId = gradeProfileId
         self.suggestedOfferPrice = suggestedOfferPrice
         self.analysisCompleteness = analysisCompleteness

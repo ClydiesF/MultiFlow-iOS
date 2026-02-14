@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import MapKit
 
 struct AddPropertySheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -11,6 +12,7 @@ struct AddPropertySheet: View {
     @AppStorage("defaultMonthlyRentPerUnit") private var defaultMonthlyRentPerUnit = 1500.0
 
     @StateObject private var viewModel = AnalysisWizardViewModel()
+    @StateObject private var locationSearchService = LocationSearchService()
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var missingFields = Set<AnalysisWizardField>()
@@ -21,6 +23,10 @@ struct AddPropertySheet: View {
     @State private var managementFee = ""
     @State private var maintenanceReserves = ""
     @State private var rentRollInputs: [RentUnitInput] = []
+    @State private var marginalTaxRate = ""
+    @State private var landValuePercent = ""
+    @State private var isOwnedProperty = false
+    @State private var isApplyingAddressSelection = false
 
     @FocusState private var focusedField: AnalysisWizardField?
 
@@ -34,6 +40,13 @@ struct AddPropertySheet: View {
     private let propertyTypeColumns = [
         GridItem(.flexible(), spacing: 12),
         GridItem(.flexible(), spacing: 12)
+    ]
+    private let usStateAbbreviations: [String] = [
+        "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
+        "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
+        "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+        "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
+        "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"
     ]
 
     var body: some View {
@@ -72,7 +85,7 @@ struct AddPropertySheet: View {
             if simpleExpenseRate.isEmpty {
                 simpleExpenseRate = String(standardOperatingExpenseRate)
             }
-            seedRentRollInputsIfNeeded()
+            syncRentRollInputsToUnitCount()
             focusFirstEmptyFieldForCurrentStep()
         }
         .onChange(of: viewModel.stepIndex) { _, _ in
@@ -85,7 +98,7 @@ struct AddPropertySheet: View {
             autoPopulateDallasTaxesIfNeeded()
         }
         .onChange(of: viewModel.resolvedUnitCount) { _, _ in
-            seedRentRollInputsIfNeeded()
+            syncRentRollInputsToUnitCount()
         }
     }
 
@@ -122,6 +135,13 @@ struct AddPropertySheet: View {
                     keyboard: .default,
                     field: .address
                 )
+                .onChange(of: viewModel.address) { _, newValue in
+                    updateAddressAutocompleteQuery(with: newValue)
+                }
+
+                if shouldShowAddressSuggestions {
+                    addressSuggestionsView
+                }
 
                 locationRow
 
@@ -138,6 +158,23 @@ struct AddPropertySheet: View {
                 }
 
                 propertyIdentityPicker
+
+                Toggle(isOn: $isOwnedProperty) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("I currently own this property")
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(ink)
+                        Text("Only owned properties are included in portfolio stats.")
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(ink.opacity(0.62))
+                    }
+                }
+                .toggleStyle(SwitchToggleStyle(tint: Color.primaryYellow))
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.cardSurface)
+                )
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 18)
@@ -194,9 +231,53 @@ struct AddPropertySheet: View {
                 }
 
                 loanTermTiles
+                financingEstimateCard
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 18)
+        }
+    }
+
+    @ViewBuilder
+    private var financingEstimateCard: some View {
+        if let breakdown = wizardMortgageBreakdown {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Estimated Mortgage")
+                    .font(.system(.headline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(ink)
+
+                HStack {
+                    Text("Monthly P&I")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(ink.opacity(0.72))
+                    Spacer()
+                    let monthlyPI = breakdown.monthlyPrincipal + breakdown.monthlyInterest
+                    Text((Formatters.currency.string(from: NSNumber(value: monthlyPI)) ?? "$0") + "/mo")
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(ink)
+                }
+
+                HStack {
+                    Text("Monthly Debt Service")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(ink.opacity(0.72))
+                    Spacer()
+                    Text((Formatters.currency.string(from: NSNumber(value: breakdown.monthlyTotal)) ?? "$0") + "/mo")
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(ink)
+                }
+
+                Text("Uses P&I + taxes + insurance. Step 3 compares this against rent and operating expenses.")
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(ink.opacity(0.6))
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.cardSurface)
+            )
+        } else {
+            EmptyView()
         }
     }
 
@@ -211,17 +292,45 @@ struct AddPropertySheet: View {
             )
             .frame(maxWidth: .infinity)
 
-            wizardField(
-                title: "State",
-                placeholder: "TX",
-                text: $viewModel.state,
-                keyboard: .default,
-                field: .state
-            )
-            .frame(width: 86)
-            .onChange(of: viewModel.state) { _, newValue in
-                viewModel.state = String(newValue.prefix(2)).uppercased()
+            VStack(alignment: .leading, spacing: 6) {
+                Text("State")
+                    .font(.system(.footnote, design: .rounded).weight(.bold))
+                    .foregroundStyle(ink.opacity(0.74))
+
+                Menu {
+                    ForEach(usStateAbbreviations, id: \.self) { abbreviation in
+                        Button(abbreviation) {
+                            viewModel.state = abbreviation
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(viewModel.state.isEmpty ? "-" : viewModel.state)
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(viewModel.state.isEmpty ? ink.opacity(0.45) : ink)
+                        Spacer()
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(ink.opacity(0.62))
+                    }
+                    .padding(.vertical, 14)
+                    .padding(.horizontal, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.cardSurface)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(
+                                missingFields.contains(.state) ? Color.red.opacity(0.85) : .clear,
+                                lineWidth: missingFields.contains(.state) ? 2 : 0
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
             }
+            .frame(width: 104)
+            .modifier(ShakeEffect(shakes: missingFields.contains(.state) ? CGFloat(shakeTick) : 0))
 
             wizardField(
                 title: "ZIP",
@@ -232,7 +341,7 @@ struct AddPropertySheet: View {
             )
             .frame(width: 118)
             .onChange(of: viewModel.zipCode) { _, newValue in
-                viewModel.zipCode = newValue.filter(\.isNumber)
+                viewModel.zipCode = String(newValue.filter(\.isNumber).prefix(5))
             }
         }
     }
@@ -267,6 +376,32 @@ struct AddPropertySheet: View {
                     maintenanceReserves: $maintenanceReserves
                 )
 
+                wizardField(
+                    title: "Marginal Tax Rate (Optional)",
+                    placeholder: "24.0",
+                    text: $marginalTaxRate,
+                    keyboard: .decimalPad,
+                    field: .marginalTaxRate,
+                    textSize: 24,
+                    suffix: "%"
+                )
+                .onChange(of: marginalTaxRate) { _, newValue in
+                    marginalTaxRate = InputFormatters.sanitizeDecimal(newValue)
+                }
+
+                wizardField(
+                    title: "Land Value (Optional)",
+                    placeholder: "20.0",
+                    text: $landValuePercent,
+                    keyboard: .decimalPad,
+                    field: .landValuePercent,
+                    textSize: 24,
+                    suffix: "%"
+                )
+                .onChange(of: landValuePercent) { _, newValue in
+                    landValuePercent = InputFormatters.sanitizeDecimal(newValue)
+                }
+
                 RentRollEditorView(
                     units: $rentRollInputs,
                     style: .compact,
@@ -289,6 +424,60 @@ struct AddPropertySheet: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 18)
         }
+    }
+
+    private var shouldShowAddressSuggestions: Bool {
+        focusedField == .address
+        && !isApplyingAddressSelection
+        && !locationSearchService.results.isEmpty
+        && viewModel.address.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3
+    }
+
+    private var addressSuggestionsView: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(locationSearchService.results.prefix(5).enumerated()), id: \.offset) { _, completion in
+                Button {
+                    applyAddressCompletion(completion)
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "mappin.and.ellipse")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.primaryYellow)
+                            .padding(.top, 1)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(completion.title)
+                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                                .foregroundStyle(ink)
+                                .lineLimit(1)
+                            if !completion.subtitle.isEmpty {
+                                Text(completion.subtitle)
+                                    .font(.system(.caption, design: .rounded).weight(.medium))
+                                    .foregroundStyle(ink.opacity(0.62))
+                                    .lineLimit(1)
+                            }
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if completion != locationSearchService.results.prefix(5).last {
+                    Divider().opacity(0.22)
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.cardSurface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.black.opacity(0.08), lineWidth: 1)
+        )
     }
 
     private var footer: some View {
@@ -562,6 +751,10 @@ struct AddPropertySheet: View {
         return MetricsEngine.weightedGrade(
             metrics: metrics,
             purchasePrice: purchase,
+            unitCount: max(
+                RentRollEditorView.validUnits(from: rentRollInputs).count,
+                viewModel.resolvedUnitCount ?? 1
+            ),
             annualPrincipalPaydown: breakdown.annualPrincipal,
             appreciationRate: 0,
             cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,
@@ -573,13 +766,14 @@ struct AddPropertySheet: View {
         guard let effectivePurchase = effectivePurchasePrice, effectivePurchase > 0 else { return nil }
         guard let interest = Double(viewModel.interestRate), interest > 0 else { return nil }
         guard let module = wizardExpenseModule else { return nil }
-
-        let roll = (0..<module.unitCount).map { _ in
-            RentUnitInput(monthlyRent: String(defaultMonthlyRentPerUnit), unitType: "Unit", bedrooms: "", bathrooms: "")
+        let annualRent = module.grossAnnualRent
+        let annualExpenseTotal: Double
+        switch expenseMode {
+        case .simple:
+            annualExpenseTotal = annualRent * (operatingExpenseRateValue / 100.0)
+        case .detailed:
+            annualExpenseTotal = module.totalOperatingExpenses
         }
-        let editorRoll = rentRollInputs
-        let hasRentRoll = RentRollEditorView.hasAtLeastOneValidRentRow(editorRoll)
-        let rollForMetrics = hasRentRoll ? editorRoll : roll
 
         let debtService = MetricsEngine.mortgageBreakdown(
             purchasePrice: effectivePurchase,
@@ -589,38 +783,22 @@ struct AddPropertySheet: View {
             annualTaxes: module.effectiveAnnualTaxes,
             annualInsurance: module.effectiveAnnualInsurance
         ).map { $0.annualPrincipal + $0.annualInterest } ?? 0
+        let netOperatingIncome = (annualRent * 0.95) - annualExpenseTotal
+        let annualCashFlow = netOperatingIncome - debtService
+        let downPayment = max(effectivePurchase * (viewModel.downPaymentPercent / 100.0), 0.0001)
+        let capRate = effectivePurchase > 0 ? netOperatingIncome / effectivePurchase : 0
+        let cashOnCash = annualCashFlow / downPayment
+        let dcr = debtService > 0 ? netOperatingIncome / debtService : 0
 
-        if expenseMode == .detailed {
-            let netOperatingIncome = module.netOperatingIncome
-            let annualCashFlow = netOperatingIncome - debtService
-            let downPayment = max(effectivePurchase * (viewModel.downPaymentPercent / 100.0), 0.0001)
-            let capRate = effectivePurchase > 0 ? netOperatingIncome / effectivePurchase : 0
-            let cashOnCash = annualCashFlow / downPayment
-            let dcr = debtService > 0 ? netOperatingIncome / debtService : 0
-
-            return DealMetrics(
-                totalAnnualRent: module.grossAnnualRent,
-                netOperatingIncome: netOperatingIncome,
-                capRate: capRate,
-                annualDebtService: debtService,
-                annualCashFlow: annualCashFlow,
-                cashOnCash: cashOnCash,
-                debtCoverageRatio: dcr,
-                grade: MetricsEngine.gradeFor(cashOnCash: cashOnCash, dcr: dcr)
-            )
-        }
-
-        return MetricsEngine.computeMetrics(
-            purchasePrice: effectivePurchase,
-            downPaymentPercent: viewModel.downPaymentPercent,
-            interestRate: interest,
-            annualTaxes: module.effectiveAnnualTaxes,
-            annualInsurance: module.effectiveAnnualInsurance,
-            loanTermYears: Double(viewModel.loanTermYears),
-            rentRoll: rollForMetrics,
-            useStandardOperatingExpense: true,
-            operatingExpenseRateOverride: operatingExpenseRateValue / 100.0,
-            operatingExpenses: []
+        return DealMetrics(
+            totalAnnualRent: annualRent,
+            netOperatingIncome: netOperatingIncome,
+            capRate: capRate,
+            annualDebtService: debtService,
+            annualCashFlow: annualCashFlow,
+            cashOnCash: cashOnCash,
+            debtCoverageRatio: dcr,
+            grade: MetricsEngine.gradeFor(cashOnCash: cashOnCash, dcr: dcr)
         )
     }
 
@@ -641,8 +819,9 @@ struct AddPropertySheet: View {
     private var gradeSubtitle: String {
         guard let metrics = wizardMetrics else { return "Enter deal inputs to grade." }
         let monthly = metrics.annualCashFlow / 12.0
-        let cashFlow = Formatters.currency.string(from: NSNumber(value: monthly)) ?? "$0"
-        return "Cash Flow \(cashFlow)/mo"
+        let monthlyCashFlow = Formatters.currency.string(from: NSNumber(value: monthly)) ?? "$0"
+        let annualCashFlow = Formatters.currency.string(from: NSNumber(value: metrics.annualCashFlow)) ?? "$0"
+        return "Monthly \(monthlyCashFlow)/mo · Annual \(annualCashFlow)/yr"
     }
 
     private func handleInvalidNextTap() {
@@ -657,6 +836,63 @@ struct AddPropertySheet: View {
     private func focusFirstEmptyFieldForCurrentStep() {
         let nextField = viewModel.firstEmptyFieldForCurrentStep()
         focusedField = (nextField == .propertyType) ? nil : nextField
+    }
+
+    private func updateAddressAutocompleteQuery(with input: String) {
+        guard !isApplyingAddressSelection else { return }
+        let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.count >= 3 {
+            locationSearchService.query = query
+        } else {
+            locationSearchService.query = ""
+            locationSearchService.results = []
+        }
+    }
+
+    private func applyAddressCompletion(_ completion: MKLocalSearchCompletion) {
+        Task { @MainActor in
+            isApplyingAddressSelection = true
+            defer { isApplyingAddressSelection = false }
+
+            do {
+                if let mapItem = try await locationSearchService.select(completion) {
+                    applyPlacemarkToWizard(mapItem.placemark, fallbackAddress: completion.title)
+                } else {
+                    viewModel.address = completion.title
+                }
+            } catch {
+                viewModel.address = completion.title
+            }
+
+            locationSearchService.query = ""
+            locationSearchService.results = []
+        }
+    }
+
+    private func applyPlacemarkToWizard(_ placemark: MKPlacemark, fallbackAddress: String) {
+        let streetNumber = placemark.subThoroughfare?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let streetName = placemark.thoroughfare?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let street = [streetNumber, streetName]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        viewModel.address = street.isEmpty ? fallbackAddress : street
+
+        if let city = placemark.locality?.trimmingCharacters(in: .whitespacesAndNewlines), !city.isEmpty {
+            viewModel.city = city
+        }
+
+        if let state = placemark.administrativeArea?.trimmingCharacters(in: .whitespacesAndNewlines), !state.isEmpty {
+            viewModel.state = String(state.prefix(2)).uppercased()
+        }
+
+        if let postalCode = placemark.postalCode {
+            let normalizedZip = String(postalCode.filter(\.isNumber).prefix(5))
+            if !normalizedZip.isEmpty {
+                viewModel.zipCode = normalizedZip
+            }
+        }
     }
 
     @MainActor
@@ -726,6 +962,9 @@ struct AddPropertySheet: View {
             loanTermYears: viewModel.loanTermYears,
             downPaymentPercent: viewModel.downPaymentPercent,
             interestRate: interest,
+            marginalTaxRate: Double(marginalTaxRate),
+            landValuePercent: Double(landValuePercent),
+            isOwned: isOwnedProperty,
             gradeProfileId: safeDefaultGradeProfileId,
             analysisCompleteness: Property.AnalysisCompletenessState.provisional.rawValue,
             missingAnalysisInputs: missingAnalysisInputs,
@@ -758,7 +997,7 @@ struct AddPropertySheet: View {
 
     private var effectivePurchasePrice: Double? {
         guard let purchase = parseCurrency(viewModel.purchasePrice), purchase > 0 else { return nil }
-        return purchase + (parseCurrency(viewModel.renoBudget) ?? 0)
+        return purchase
     }
 
     private var safeDefaultGradeProfileId: String? {
@@ -771,19 +1010,12 @@ struct AddPropertySheet: View {
     private var wizardExpenseModule: MFMetricEngine.ExpenseModule? {
         guard let purchase = parseCurrency(viewModel.purchasePrice), purchase > 0 else { return nil }
         guard let unitCount = viewModel.resolvedUnitCount, unitCount > 0 else { return nil }
-        let enteredRentUnits = RentRollEditorView.validUnits(from: rentRollInputs)
-        let grossAnnualRent: Double
-        let moduleUnitCount: Int
-        if enteredRentUnits.isEmpty {
-            grossAnnualRent = Double(unitCount) * defaultMonthlyRentPerUnit * 12.0
-            moduleUnitCount = unitCount
-        } else {
-            grossAnnualRent = enteredRentUnits.reduce(0) { $0 + $1.monthlyRent } * 12.0
-            moduleUnitCount = enteredRentUnits.count
-        }
+        let grossAnnualRent = effectiveRentRollForWizard
+            .compactMap { InputFormatters.parseCurrency($0.monthlyRent) }
+            .reduce(0, +) * 12.0
         return MFMetricEngine.ExpenseModule(
             purchasePrice: purchase,
-            unitCount: moduleUnitCount,
+            unitCount: unitCount,
             grossAnnualRent: grossAnnualRent,
             annualTaxes: parseCurrency(viewModel.annualTaxes),
             annualInsurance: parseCurrency(annualInsuranceInput),
@@ -792,8 +1024,37 @@ struct AddPropertySheet: View {
         )
     }
 
+    private var effectiveRentRollForWizard: [RentUnitInput] {
+        let unitCount = max(viewModel.resolvedUnitCount ?? rentRollInputs.count, 1)
+
+        return (0..<unitCount).map { index in
+            let input = rentRollInputs.indices.contains(index) ? rentRollInputs[index] : RentUnitInput(
+                monthlyRent: "",
+                unitType: "Unit \(index + 1)",
+                bedrooms: "",
+                bathrooms: "",
+                squareFeet: ""
+            )
+            let parsed = InputFormatters.parseCurrency(input.monthlyRent) ?? 0
+            let rentValue = parsed > 0 ? parsed : defaultMonthlyRentPerUnit
+
+            return RentUnitInput(
+                monthlyRent: String(rentValue),
+                unitType: input.unitType.isEmpty ? "Unit \(index + 1)" : input.unitType,
+                bedrooms: input.bedrooms,
+                bathrooms: input.bathrooms,
+                squareFeet: input.squareFeet
+            )
+        }
+    }
+
     private var operatingExpenseRateValue: Double {
         Double(simpleExpenseRate) ?? standardOperatingExpenseRate
+    }
+
+    private var defaultRentInputString: String {
+        Formatters.currencyTwo.string(from: NSNumber(value: defaultMonthlyRentPerUnit))
+        ?? String(defaultMonthlyRentPerUnit)
     }
 
     private var detailedOperatingExpenses: [OperatingExpenseItem] {
@@ -860,20 +1121,43 @@ struct AddPropertySheet: View {
             viewModel.exactUnitsForTenPlus = "10"
         }
 
-        seedRentRollInputsIfNeeded()
+        syncRentRollInputsToUnitCount()
     }
 
-    private func seedRentRollInputsIfNeeded() {
-        guard rentRollInputs.isEmpty else { return }
-        rentRollInputs = [
-            RentUnitInput(
-                monthlyRent: "",
-                unitType: "Unit 1",
-                bedrooms: "",
-                bathrooms: "",
-                squareFeet: ""
-            )
-        ]
+    private func syncRentRollInputsToUnitCount() {
+        let targetCount = max(viewModel.resolvedUnitCount ?? 1, 1)
+
+        if rentRollInputs.isEmpty {
+            rentRollInputs = (1...targetCount).map { index in
+                RentUnitInput(
+                    monthlyRent: defaultRentInputString,
+                    unitType: "Unit \(index)",
+                    bedrooms: "",
+                    bathrooms: "",
+                    squareFeet: ""
+                )
+            }
+            return
+        }
+
+        if rentRollInputs.count < targetCount {
+            let start = rentRollInputs.count + 1
+            rentRollInputs.append(contentsOf: (start...targetCount).map { index in
+                RentUnitInput(
+                    monthlyRent: defaultRentInputString,
+                    unitType: "Unit \(index)",
+                    bedrooms: "",
+                    bathrooms: "",
+                    squareFeet: ""
+                )
+            })
+        } else if rentRollInputs.count > targetCount {
+            rentRollInputs = Array(rentRollInputs.prefix(targetCount))
+        }
+
+        for index in rentRollInputs.indices where rentRollInputs[index].unitType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rentRollInputs[index].unitType = "Unit \(index + 1)"
+        }
     }
 }
 

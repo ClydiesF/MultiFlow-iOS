@@ -61,6 +61,13 @@ struct PropertyDetailView: View {
     @State private var isEditingExpenses = false
     @State private var isSavingExpenses = false
     @State private var expenseSaveError: String?
+    @State private var marginalTaxRateInput = ""
+    @State private var landValuePercentInput = ""
+    @State private var isSavingTaxAssumptions = false
+    @State private var taxAssumptionError: String?
+    @State private var isOwnedToggle = false
+    @State private var isSavingOwnership = false
+    @State private var ownershipError: String?
 
     var body: some View {
         ZStack {
@@ -72,9 +79,11 @@ struct PropertyDetailView: View {
                     if shouldShowCompleteAnalysisSection {
                         completeAnalysisSection
                     }
+                    ownershipSection
                     mediaActionChipsRow
                     summarySection
                     pillarsSection
+                    taxAssumptionsSection
                     mortgageSection
                     cashToCloseSection
                     if isEditingAnalysis {
@@ -177,6 +186,8 @@ struct PropertyDetailView: View {
         .onAppear {
             simpleExpenseRate = String(standardOperatingExpenseRate)
             syncInlineRentRollInputs(from: activeProperty)
+            syncTaxAssumptionsInputs(from: activeProperty)
+            isOwnedToggle = activeProperty.isOwned == true
         }
         .onChange(of: selectedPhotoItem) { _, newItem in
             guard let newItem else { return }
@@ -185,16 +196,29 @@ struct PropertyDetailView: View {
                    let image = UIImage(data: data) {
                     await uploadDetailImage(image)
                 }
+                await MainActor.run {
+                    selectedPhotoItem = nil
+                }
             }
         }
         .onChange(of: activeProperty.id) { _, _ in
             if !isEditingAnalysis {
                 syncInlineRentRollInputs(from: activeProperty)
+                syncTaxAssumptionsInputs(from: activeProperty)
+                isOwnedToggle = activeProperty.isOwned == true
             }
         }
         .onChange(of: activeProperty.rentRoll) { _, _ in
             guard !isEditingAnalysis else { return }
             syncInlineRentRollInputs(from: activeProperty)
+        }
+        .onChange(of: activeProperty.marginalTaxRate) { _, _ in
+            guard !isSavingTaxAssumptions else { return }
+            syncTaxAssumptionsInputs(from: activeProperty)
+        }
+        .onChange(of: activeProperty.landValuePercent) { _, _ in
+            guard !isSavingTaxAssumptions else { return }
+            syncTaxAssumptionsInputs(from: activeProperty)
         }
         .onChange(of: inlineRentRollInputs) { _, _ in
             scheduleInlineRentRollAutosave()
@@ -287,11 +311,59 @@ struct PropertyDetailView: View {
     }
 
     private var mediaActionChipsRow: some View {
-        HStack(spacing: 10) {
-            mapChip
-            photoChip
-            Spacer()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                mapChip
+                photoChip
+                Spacer()
+            }
+            if let photoUploadError {
+                Text(photoUploadError)
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.red)
+            }
         }
+    }
+
+    private var ownershipSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: isOwnedToggle ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isOwnedToggle ? Color.primaryYellow : Color.richBlack.opacity(0.45))
+
+                Text("Owned Property")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack)
+
+                Spacer()
+
+                Toggle("", isOn: ownedToggleBinding)
+                    .labelsHidden()
+                    .toggleStyle(SwitchToggleStyle(tint: Color.primaryYellow))
+            }
+
+            if isSavingOwnership {
+                Text("Saving...")
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.58))
+            } else if let ownershipError {
+                Text(ownershipError)
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.red)
+            }
+        }
+        .cardStyle()
+    }
+
+    private var ownedToggleBinding: Binding<Bool> {
+        Binding(
+            get: { isOwnedToggle },
+            set: { newValue in
+                isOwnedToggle = newValue
+                Task { await saveOwnershipChange() }
+            }
+        )
     }
 
     private var pillarsSection: some View {
@@ -334,6 +406,49 @@ struct PropertyDetailView: View {
                     .font(.system(.footnote, design: .rounded))
                     .foregroundStyle(Color.richBlack.opacity(0.6))
             }
+        }
+        .cardStyle()
+    }
+
+    private var taxAssumptionsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Tax Assumptions")
+                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Text("Used for the Tax Incentives pillar.")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.62))
+                }
+                Spacer()
+            }
+
+            HStack(spacing: 10) {
+                LabeledTextField(title: "Marginal Tax Rate %", text: $marginalTaxRateInput, keyboard: .decimalPad)
+                    .onChange(of: marginalTaxRateInput) { _, newValue in
+                        marginalTaxRateInput = InputFormatters.sanitizeDecimal(newValue)
+                        taxAssumptionError = nil
+                    }
+
+                LabeledTextField(title: "Land Value %", text: $landValuePercentInput, keyboard: .decimalPad)
+                    .onChange(of: landValuePercentInput) { _, newValue in
+                        landValuePercentInput = InputFormatters.sanitizeDecimal(newValue)
+                        taxAssumptionError = nil
+                    }
+            }
+
+            if let taxAssumptionError {
+                Text(taxAssumptionError)
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.red)
+            }
+
+            Button(isSavingTaxAssumptions ? "Saving..." : "Save Tax Assumptions") {
+                Task { await saveTaxAssumptions() }
+            }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(isSavingTaxAssumptions)
         }
         .cardStyle()
     }
@@ -592,13 +707,18 @@ struct PropertyDetailView: View {
 
                 Button {
                     showPhotoSourcePopover = false
-                    showCamera = true
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                        showCamera = true
+                    } else {
+                        photoUploadError = "Camera is unavailable on this device."
+                    }
                 } label: {
                     Label("Camera", systemImage: "camera")
                         .font(.system(.footnote, design: .rounded).weight(.semibold))
                         .foregroundStyle(Color.richBlack)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
             }
             .padding(12)
             .frame(width: 180)
@@ -945,15 +1065,15 @@ struct PropertyDetailView: View {
             return nil
         }
 
-        let appreciation = activeProperty.appreciationRate ?? 0
+        let appreciation = liveDisplayProperty.appreciationRate ?? 0
         return EvaluatorEngine.evaluate(
-            purchasePrice: activeProperty.purchasePrice,
+            purchasePrice: liveDisplayProperty.purchasePrice,
             annualCashFlow: metrics.annualCashFlow,
             annualPrincipalPaydown: breakdown.annualPrincipal,
             appreciationRate: appreciation,
             cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,
-            marginalTaxRate: activeProperty.marginalTaxRate,
-            landValuePercent: activeProperty.landValuePercent
+            marginalTaxRate: liveDisplayProperty.marginalTaxRate,
+            landValuePercent: liveDisplayProperty.landValuePercent
         )
     }
 
@@ -1058,6 +1178,12 @@ struct PropertyDetailView: View {
         inlineRentRollLastSavedFingerprint = rentRollFingerprint(property.rentRoll)
     }
 
+    private func syncTaxAssumptionsInputs(from property: Property) {
+        marginalTaxRateInput = property.marginalTaxRate.map { String(format: "%.2f", $0) } ?? ""
+        landValuePercentInput = property.landValuePercent.map { String(format: "%.2f", $0) } ?? ""
+        taxAssumptionError = nil
+    }
+
     private func scheduleInlineRentRollAutosave() {
         inlineRentRollAutosaveTask?.cancel()
         guard !isEditingAnalysis else { return }
@@ -1083,9 +1209,6 @@ struct PropertyDetailView: View {
 
     private func saveInlineRentRoll(units: [RentUnit], fingerprint: String) async {
         inlineRentRollError = nil
-        guard !isEditingAnalysis else {
-            return
-        }
         guard let propertyId = activeProperty.id,
               let index = propertyStore.properties.firstIndex(where: { $0.id == propertyId }) else {
             inlineRentRollError = "Property was not found. Reload and try again."
@@ -1108,6 +1231,49 @@ struct PropertyDetailView: View {
             inlineRentRollError = error.localizedDescription
         }
         inlineRentRollIsSaving = false
+    }
+
+    private func saveTaxAssumptions() async {
+        guard let propertyId = activeProperty.id,
+              let index = propertyStore.properties.firstIndex(where: { $0.id == propertyId }) else {
+            taxAssumptionError = "Property was not found. Reload and try again."
+            return
+        }
+
+        isSavingTaxAssumptions = true
+        defer { isSavingTaxAssumptions = false }
+        taxAssumptionError = nil
+
+        var updated = propertyStore.properties[index]
+        updated.marginalTaxRate = Double(marginalTaxRateInput)
+        updated.landValuePercent = Double(landValuePercentInput)
+
+        do {
+            try await propertyStore.updateProperty(updated)
+        } catch {
+            taxAssumptionError = error.localizedDescription
+        }
+    }
+
+    private func saveOwnershipChange() async {
+        guard let propertyId = activeProperty.id,
+              let index = propertyStore.properties.firstIndex(where: { $0.id == propertyId }) else {
+            ownershipError = "Property was not found. Reload and try again."
+            return
+        }
+
+        ownershipError = nil
+        isSavingOwnership = true
+        defer { isSavingOwnership = false }
+
+        var updated = propertyStore.properties[index]
+        updated.isOwned = isOwnedToggle
+
+        do {
+            try await propertyStore.updateProperty(updated)
+        } catch {
+            ownershipError = error.localizedDescription
+        }
     }
 
     private func rentRollFingerprint(_ units: [RentUnit]) -> String {
@@ -1207,7 +1373,7 @@ struct PropertyDetailView: View {
 
             return MetricsEngine.computeMetrics(property: draft)
         }
-        return MetricsEngine.computeMetrics(property: activeProperty)
+        return MetricsEngine.computeMetrics(property: liveDisplayProperty)
     }
 
     private var draftProperty: Property? {
@@ -1333,7 +1499,16 @@ struct PropertyDetailView: View {
             updated.imageURL = uploaded.signedURL.absoluteString
             try await propertyStore.updateProperty(updated)
         } catch {
-            photoUploadError = error.localizedDescription
+            let message = error.localizedDescription
+            if message.localizedCaseInsensitiveContains("not authenticated") {
+                photoUploadError = "Please sign in again, then upload the photo."
+            } else if message.localizedCaseInsensitiveContains("row-level security")
+                || message.localizedCaseInsensitiveContains("permission")
+                || message.localizedCaseInsensitiveContains("unauthorized") {
+                photoUploadError = "Upload was blocked by Supabase storage policy. Re-apply the storage policies and retry."
+            } else {
+                photoUploadError = message
+            }
         }
     }
 
@@ -1401,8 +1576,20 @@ struct PropertyDetailView: View {
         return propertyStore.properties.first { $0.id == id } ?? property
     }
 
+    private var liveDisplayProperty: Property {
+        guard !isEditingAnalysis else { return activeProperty }
+        var property = activeProperty
+        let units = RentRollEditorView.validUnits(from: inlineRentRollInputs)
+        if !units.isEmpty {
+            property.rentRoll = units
+        }
+        property.marginalTaxRate = Double(marginalTaxRateInput)
+        property.landValuePercent = Double(landValuePercentInput)
+        return property
+    }
+
     private var weightedGrade: Grade {
-        weightedGrade(for: activeProperty)
+        weightedGrade(for: liveDisplayProperty)
     }
 
     private var activeProfile: GradeProfile {
@@ -1524,11 +1711,11 @@ struct PropertyDetailView: View {
     }
 
     private var totalBeds: Double {
-        activeProperty.rentRoll.reduce(0) { $0 + $1.bedrooms }
+        liveDisplayProperty.rentRoll.reduce(0) { $0 + $1.bedrooms }
     }
 
     private var totalBaths: Double {
-        activeProperty.rentRoll.reduce(0) { $0 + $1.bathrooms }
+        liveDisplayProperty.rentRoll.reduce(0) { $0 + $1.bathrooms }
     }
 
     private func weightedGrade(for property: Property) -> Grade {
@@ -1549,6 +1736,7 @@ struct PropertyDetailView: View {
         return MetricsEngine.weightedGrade(
             metrics: metrics,
             purchasePrice: property.purchasePrice,
+            unitCount: max(property.rentRoll.count, 1),
             annualPrincipalPaydown: breakdown.annualPrincipal,
             appreciationRate: property.appreciationRate ?? 0,
             cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,
@@ -1677,9 +1865,9 @@ struct PropertyDetailView: View {
     }
 
     private var effectiveUnitCount: Int {
-        let parsedHints = activeProperty.rentRoll.compactMap { unitCountHint(from: $0.unitType) }
+        let parsedHints = liveDisplayProperty.rentRoll.compactMap { unitCountHint(from: $0.unitType) }
         let hintCount = parsedHints.max() ?? 0
-        return max(activeProperty.rentRoll.count, hintCount, 1)
+        return max(liveDisplayProperty.rentRoll.count, hintCount, 1)
     }
 
     private func unitCountHint(from raw: String) -> Int? {
