@@ -5,8 +5,10 @@ import Charts
 struct PortfolioView: View {
     @EnvironmentObject var propertyStore: PropertyStore
     @EnvironmentObject var gradeProfileStore: GradeProfileStore
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
     @AppStorage("cashflowBreakEvenThreshold") private var cashflowBreakEvenThreshold = 500.0
     @State private var showingAdd = false
+    @State private var showingPaywall = false
     @State private var showToast = false
     @State private var showDeleteToast = false
     @State private var lastDeletedProperty: Property?
@@ -90,7 +92,7 @@ struct PortfolioView: View {
                 .accessibilityLabel("Grade profiles")
 
                 Button {
-                    showingAdd = true
+                    presentAddPropertyFlow()
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -102,6 +104,11 @@ struct PortfolioView: View {
             AddPropertySheet(didAddProperty: $showToast)
                 .environmentObject(propertyStore)
                 .environmentObject(gradeProfileStore)
+                .environmentObject(subscriptionManager)
+        }
+        .sheet(isPresented: $showingPaywall) {
+            PaywallView()
+                .environmentObject(subscriptionManager)
         }
         .onChange(of: propertyStore.lastDeletedProperty) { _, newValue in
             guard let deleted = newValue else { return }
@@ -147,7 +154,7 @@ struct PortfolioView: View {
                 .multilineTextAlignment(.center)
 
             Button("Add Property") {
-                showingAdd = true
+                presentAddPropertyFlow()
             }
             .buttonStyle(PrimaryButtonStyle())
             .padding(.horizontal, 40)
@@ -337,6 +344,14 @@ struct PortfolioView: View {
         generator.notificationOccurred(.warning)
     }
 
+    private func presentAddPropertyFlow() {
+        if subscriptionManager.isPremium || propertyStore.properties.count < 3 {
+            showingAdd = true
+        } else {
+            showingPaywall = true
+        }
+    }
+
     private func scheduleDeleteToastDismiss() {
         deleteToastTask?.cancel()
         deleteToastTask = Task {
@@ -433,5 +448,6 @@ struct CashFlowHealth {
         PortfolioView()
             .environmentObject(PropertyStore())
             .environmentObject(GradeProfileStore())
+            .environmentObject(SubscriptionManager())
     }
 }

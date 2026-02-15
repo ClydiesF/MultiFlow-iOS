@@ -12,6 +12,7 @@ struct MultiFlowApp: App {
     @StateObject private var authViewModel = AuthViewModel()
     @StateObject private var propertyStore = PropertyStore()
     @StateObject private var gradeProfileStore = GradeProfileStore()
+    @StateObject private var subscriptionManager = SubscriptionManager()
     @AppStorage("colorSchemePreference") private var colorSchemePreference = 0
 
     init() {
@@ -24,7 +25,15 @@ struct MultiFlowApp: App {
                 .environmentObject(authViewModel)
                 .environmentObject(propertyStore)
                 .environmentObject(gradeProfileStore)
+                .environmentObject(subscriptionManager)
                 .preferredColorScheme(preferredScheme)
+                .task {
+                    subscriptionManager.configureIfNeeded()
+                    await subscriptionManager.syncAuthUser(authViewModel.user?.id)
+                }
+                .task(id: authViewModel.user?.id) {
+                    await subscriptionManager.syncAuthUser(authViewModel.user?.id)
+                }
         }
     }
 

@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A1B2C3D42F50000100000001 /* RevenueCat in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D62F50000100000001 /* RevenueCat */; };
+		A1B2C3D52F50000100000001 /* RevenueCatUI in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D72F50000100000001 /* RevenueCatUI */; };
 		B9C709712D9A4A63AA0DECEE /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = B8BE7DE4E09A4A2A90A70858 /* Supabase */; };
 /* End PBXBuildFile section */
 
@@ -27,6 +29,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1B2C3D42F50000100000001 /* RevenueCat in Frameworks */,
+				A1B2C3D52F50000100000001 /* RevenueCatUI in Frameworks */,
 				B9C709712D9A4A63AA0DECEE /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -78,6 +82,8 @@
 			);
 			name = MultiFlow;
 			packageProductDependencies = (
+				A1B2C3D62F50000100000001 /* RevenueCat */,
+				A1B2C3D72F50000100000001 /* RevenueCatUI */,
 				B8BE7DE4E09A4A2A90A70858 /* Supabase */,
 			);
 			productName = MultiFlow;
@@ -110,6 +116,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				BC1F4CEEA32A4F3A80BFD53A /* XCRemoteSwiftPackageReference "supabase-swift" */,
+				3B06EF952F4166DD002772F6 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3B4E1EB92F3173A4003B6336 /* Products */;
@@ -365,6 +372,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		3B06EF952F4166DD002772F6 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/RevenueCat/purchases-ios-spm.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.59.0;
+			};
+		};
 		BC1F4CEEA32A4F3A80BFD53A /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/supabase/supabase-swift";
@@ -376,6 +391,16 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		A1B2C3D62F50000100000001 /* RevenueCat */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3B06EF952F4166DD002772F6 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */;
+			productName = RevenueCat;
+		};
+		A1B2C3D72F50000100000001 /* RevenueCatUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3B06EF952F4166DD002772F6 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */;
+			productName = RevenueCatUI;
+		};
 		B8BE7DE4E09A4A2A90A70858 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = BC1F4CEEA32A4F3A80BFD53A /* XCRemoteSwiftPackageReference "supabase-swift" */;

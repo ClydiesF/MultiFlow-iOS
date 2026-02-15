@@ -146,4 +146,5 @@ struct AuthView: View {
 #Preview {
     AuthView()
         .environmentObject(AuthViewModel())
+        .environmentObject(SubscriptionManager())
 }

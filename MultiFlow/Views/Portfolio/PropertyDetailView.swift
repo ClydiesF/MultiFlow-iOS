@@ -6,6 +6,7 @@ import PhotosUI
 struct PropertyDetailView: View {
     @EnvironmentObject var propertyStore: PropertyStore
     @EnvironmentObject var gradeProfileStore: GradeProfileStore
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
     @AppStorage("standardOperatingExpenseRate") private var standardOperatingExpenseRate = 35.0
     @AppStorage("cashflowBreakEvenThreshold") private var cashflowBreakEvenThreshold = 500.0
     @AppStorage("defaultMonthlyRentPerUnit") private var defaultMonthlyRentPerUnit = 1500.0
@@ -68,6 +69,14 @@ struct PropertyDetailView: View {
     @State private var isOwnedToggle = false
     @State private var isSavingOwnership = false
     @State private var ownershipError: String?
+    @State private var marketInsightSnapshot: MarketInsightSnapshot?
+    @State private var isLoadingMarketInsights = false
+    @State private var showMarketInsightPaywall = false
+    @State private var marketInsightError: String?
+    @State private var suggestedMarketRentPerUnit: Double?
+    @State private var showDeepDive = false
+
+    private let marketInsightsService = MarketInsightsService()
 
     var body: some View {
         ZStack {
@@ -90,6 +99,7 @@ struct PropertyDetailView: View {
                         analysisEditSection
                     }
                     operatingExpenseSection
+                    marketInsightsSection
                     rentRollSection
                 }
                 .padding(24)
@@ -105,7 +115,14 @@ struct PropertyDetailView: View {
                     Image(systemName: "trash")
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    showDeepDive = true
+                } label: {
+                    Image(systemName: "rectangle.and.text.magnifyingglass")
+                }
+                .accessibilityLabel("Open deep dive")
+
                 Button {
                     Task { await exportPDF() }
                 } label: {
@@ -182,12 +199,28 @@ struct PropertyDetailView: View {
                 Task { await uploadDetailImage(image) }
             }
         }
+        .sheet(isPresented: $showMarketInsightPaywall) {
+            PaywallView()
+                .environmentObject(subscriptionManager)
+        }
+        .fullScreenCover(isPresented: $showDeepDive) {
+            NavigationStack {
+                PropertyDeepDiveView(property: activeProperty)
+                    .environmentObject(subscriptionManager)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showDeepDive = false }
+                        }
+                    }
+            }
+        }
         .photosPicker(isPresented: $showPhotoLibraryPicker, selection: $selectedPhotoItem, matching: .images)
         .onAppear {
             simpleExpenseRate = String(standardOperatingExpenseRate)
             syncInlineRentRollInputs(from: activeProperty)
             syncTaxAssumptionsInputs(from: activeProperty)
             isOwnedToggle = activeProperty.isOwned == true
+            Task { await loadMarketInsightsIfNeeded() }
         }
         .onChange(of: selectedPhotoItem) { _, newItem in
             guard let newItem else { return }
@@ -364,6 +397,35 @@ struct PropertyDetailView: View {
                 Task { await saveOwnershipChange() }
             }
         )
+    }
+
+    private var marketInsightsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            MarketInsightView(
+                snapshot: marketInsightSnapshot,
+                isPremiumUnlocked: subscriptionManager.checkAccess(feature: .marketInsights),
+                isLoading: isLoadingMarketInsights,
+                onUnlock: {
+                    showMarketInsightPaywall = true
+                }
+            )
+
+            RentalMarketScaleView(
+                currentRent: currentUnitRent,
+                medianMarketRent: marketMedianUnitRent,
+                daysOnMarket: marketInsightSnapshot?.daysOnMarket ?? 0,
+                rentGrowthPercent: marketInsightSnapshot?.rentGrowthYoYPercent ?? 0,
+                comparables: rentalMarketComparables,
+                isPremiumUnlocked: subscriptionManager.checkAccess(feature: .marketInsights),
+                onUnlock: { showMarketInsightPaywall = true }
+            )
+
+            if let marketInsightError, subscriptionManager.checkAccess(feature: .marketInsights) {
+                Text(marketInsightError)
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.red)
+            }
+        }
     }
 
     private var pillarsSection: some View {
@@ -1276,6 +1338,66 @@ struct PropertyDetailView: View {
         }
     }
 
+    @MainActor
+    private func loadMarketInsightsIfNeeded() async {
+        marketInsightError = nil
+
+        guard subscriptionManager.checkAccess(feature: .marketInsights) else {
+            isLoadingMarketInsights = false
+            suggestedMarketRentPerUnit = nil
+            return
+        }
+
+        suggestedMarketRentPerUnit = await marketInsightsService.suggestMonthlyRentPerUnit(
+            city: activeProperty.city,
+            state: activeProperty.state
+        )
+
+        guard let zip = activeProperty.zipCode?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !zip.isEmpty else {
+            marketInsightSnapshot = nil
+            isLoadingMarketInsights = false
+            return
+        }
+
+        isLoadingMarketInsights = true
+        defer { isLoadingMarketInsights = false }
+
+        do {
+            marketInsightSnapshot = try await marketInsightsService.fetchMarketInsights(
+                zipCode: zip,
+                city: activeProperty.city,
+                state: activeProperty.state
+            )
+        } catch {
+            marketInsightSnapshot = nil
+            marketInsightError = error.localizedDescription
+        }
+    }
+
+    private var currentUnitRent: Double {
+        let monthlyRents = liveDisplayProperty.rentRoll.map(\.monthlyRent).filter { $0 > 0 }
+        guard !monthlyRents.isEmpty else { return defaultMonthlyRentPerUnit }
+        return monthlyRents.reduce(0, +) / Double(monthlyRents.count)
+    }
+
+    private var marketMedianUnitRent: Double {
+        let suggested = suggestedMarketRentPerUnit ?? defaultMonthlyRentPerUnit
+        return max(suggested, currentUnitRent * 0.9)
+    }
+
+    private var rentalMarketComparables: [RentalMarketScaleView.RentalComparable] {
+        let cityText = activeProperty.city ?? "Local"
+        let stateText = activeProperty.state ?? "TX"
+        let base = marketMedianUnitRent
+        return [
+            .init(address: "118 Amber Ln, \(cityText), \(stateText)", monthlyRent: base * 0.93, distanceMiles: 0.6),
+            .init(address: "240 Ridge Rd, \(cityText), \(stateText)", monthlyRent: base * 1.00, distanceMiles: 1.1),
+            .init(address: "75 Willow Dr, \(cityText), \(stateText)", monthlyRent: base * 1.06, distanceMiles: 1.8),
+            .init(address: "9 Pine Crest Ct, \(cityText), \(stateText)", monthlyRent: base * 1.10, distanceMiles: 2.4)
+        ]
+    }
+
     private func rentRollFingerprint(_ units: [RentUnit]) -> String {
         units.map {
             [
@@ -1916,4 +2038,5 @@ private struct CapexItemInput: Identifiable {
     }
     .environmentObject(PropertyStore())
     .environmentObject(GradeProfileStore())
+    .environmentObject(SubscriptionManager())
 }

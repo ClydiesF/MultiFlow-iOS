@@ -18,4 +18,5 @@ struct ContentView: View {
         .environmentObject(AuthViewModel())
         .environmentObject(PropertyStore())
         .environmentObject(GradeProfileStore())
+        .environmentObject(SubscriptionManager())
 }

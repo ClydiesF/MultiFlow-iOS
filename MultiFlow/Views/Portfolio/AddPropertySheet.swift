@@ -7,6 +7,7 @@ struct AddPropertySheet: View {
     @Binding var didAddProperty: Bool
     @EnvironmentObject var propertyStore: PropertyStore
     @EnvironmentObject var gradeProfileStore: GradeProfileStore
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
     @AppStorage("standardOperatingExpenseRate") private var standardOperatingExpenseRate = 35.0
     @AppStorage("cashflowBreakEvenThreshold") private var cashflowBreakEvenThreshold = 500.0
     @AppStorage("defaultMonthlyRentPerUnit") private var defaultMonthlyRentPerUnit = 1500.0
@@ -27,8 +28,10 @@ struct AddPropertySheet: View {
     @State private var landValuePercent = ""
     @State private var isOwnedProperty = false
     @State private var isApplyingAddressSelection = false
+    @State private var showPaywall = false
 
     @FocusState private var focusedField: AnalysisWizardField?
+    private let marketInsightsService = MarketInsightsService()
 
     private let canvasGrey = Color.canvasWhite
     private let ink = Color.richBlack
@@ -100,6 +103,10 @@ struct AddPropertySheet: View {
         .onChange(of: viewModel.resolvedUnitCount) { _, _ in
             syncRentRollInputsToUnitCount()
         }
+        .sheet(isPresented: $showPaywall) {
+            PaywallView()
+                .environmentObject(subscriptionManager)
+        }
     }
 
     private var header: some View {
@@ -138,6 +145,8 @@ struct AddPropertySheet: View {
                 .onChange(of: viewModel.address) { _, newValue in
                     updateAddressAutocompleteQuery(with: newValue)
                 }
+
+                autoFillAddressButton
 
                 if shouldShowAddressSuggestions {
                     addressSuggestionsView
@@ -409,6 +418,9 @@ struct AddPropertySheet: View {
                     requiresValidRentRow: false
                 )
 
+                marketRentSuggestionButton
+                nationwideTaxesButton
+
                 if viewModel.city.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "dallas" {
                     Text("Dallas detected: taxes auto-populate at 2.23% of purchase price.")
                         .font(.system(.caption, design: .rounded).weight(.semibold))
@@ -429,8 +441,109 @@ struct AddPropertySheet: View {
     private var shouldShowAddressSuggestions: Bool {
         focusedField == .address
         && !isApplyingAddressSelection
+        && subscriptionManager.checkAccess(feature: .autoFillAddress)
         && !locationSearchService.results.isEmpty
         && viewModel.address.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3
+    }
+
+    private var autoFillAddressButton: some View {
+        Button {
+            if subscriptionManager.checkAccess(feature: .autoFillAddress) {
+                let query = viewModel.address.trimmingCharacters(in: .whitespacesAndNewlines)
+                if query.count >= 3 {
+                    updateAddressAutocompleteQuery(with: query)
+                } else {
+                    focusedField = .address
+                    errorMessage = "Enter at least 3 address characters for Auto-Fill."
+                }
+            } else {
+                showPaywall = true
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Auto-Fill Address")
+                    .font(.system(.footnote, design: .rounded).weight(.bold))
+                if !subscriptionManager.checkAccess(feature: .autoFillAddress) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                Spacer()
+            }
+            .foregroundStyle(ink)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.cardSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var marketRentSuggestionButton: some View {
+        Button {
+            Task { await handleMarketRentSuggestionTap() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Market Rent Suggestion")
+                    .font(.system(.footnote, design: .rounded).weight(.bold))
+                if !subscriptionManager.checkAccess(feature: .marketRentSuggestion) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                Spacer()
+            }
+            .foregroundStyle(ink)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.cardSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var nationwideTaxesButton: some View {
+        Button {
+            Task { await handleNationwideTaxTap() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "building.columns")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Nationwide Tax Estimate")
+                    .font(.system(.footnote, design: .rounded).weight(.bold))
+                if !subscriptionManager.checkAccess(feature: .nationwideTaxes) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                Spacer()
+            }
+            .foregroundStyle(ink)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.cardSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var addressSuggestionsView: some View {
@@ -839,6 +952,11 @@ struct AddPropertySheet: View {
     }
 
     private func updateAddressAutocompleteQuery(with input: String) {
+        guard subscriptionManager.isPremium else {
+            locationSearchService.query = ""
+            locationSearchService.results = []
+            return
+        }
         guard !isApplyingAddressSelection else { return }
         let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if query.count >= 3 {
@@ -850,6 +968,10 @@ struct AddPropertySheet: View {
     }
 
     private func applyAddressCompletion(_ completion: MKLocalSearchCompletion) {
+        guard subscriptionManager.isPremium else {
+            showPaywall = true
+            return
+        }
         Task { @MainActor in
             isApplyingAddressSelection = true
             defer { isApplyingAddressSelection = false }
@@ -867,6 +989,52 @@ struct AddPropertySheet: View {
             locationSearchService.query = ""
             locationSearchService.results = []
         }
+    }
+
+    @MainActor
+    private func handleMarketRentSuggestionTap() async {
+        guard subscriptionManager.checkAccess(feature: .marketRentSuggestion) else {
+            showPaywall = true
+            return
+        }
+
+        // API protection: only execute premium insight calls for premium users.
+        guard subscriptionManager.isPremium else { return }
+        let suggestedRent = await marketInsightsService.suggestMonthlyRentPerUnit(
+            city: viewModel.city,
+            state: viewModel.state
+        )
+        let formatted = Formatters.currencyTwo.string(from: NSNumber(value: suggestedRent))
+            ?? String(suggestedRent)
+
+        for index in rentRollInputs.indices {
+            if InputFormatters.parseCurrency(rentRollInputs[index].monthlyRent) == nil
+                || (InputFormatters.parseCurrency(rentRollInputs[index].monthlyRent) ?? 0) <= 0 {
+                rentRollInputs[index].monthlyRent = formatted
+            }
+        }
+    }
+
+    @MainActor
+    private func handleNationwideTaxTap() async {
+        guard subscriptionManager.checkAccess(feature: .nationwideTaxes) else {
+            showPaywall = true
+            return
+        }
+
+        // API protection: only execute premium insight calls for premium users.
+        guard subscriptionManager.isPremium else { return }
+        guard let purchase = parseCurrency(viewModel.purchasePrice), purchase > 0 else {
+            errorMessage = "Enter purchase price first."
+            return
+        }
+        guard let rate = await marketInsightsService.estimatedTaxRate(state: viewModel.state) else {
+            errorMessage = "Select a valid state to estimate taxes."
+            return
+        }
+
+        viewModel.annualTaxes = Formatters.currencyTwo.string(from: NSNumber(value: purchase * rate))
+            ?? viewModel.annualTaxes
     }
 
     private func applyPlacemarkToWizard(_ placemark: MKPlacemark, fallbackAddress: String) {
@@ -898,6 +1066,12 @@ struct AddPropertySheet: View {
     @MainActor
     private func saveProperty() async {
         errorMessage = nil
+
+        if !subscriptionManager.isPremium && propertyStore.properties.count >= 3 {
+            errorMessage = "Free tier supports up to 3 properties. Upgrade to Pro for unlimited properties."
+            showPaywall = true
+            return
+        }
 
         guard let purchase = parseCurrency(viewModel.purchasePrice), purchase > 0 else {
             errorMessage = "Enter a valid purchase price."
@@ -1183,11 +1357,13 @@ private struct AddPropertySheetPreviewHost: View {
     @State private var didAddProperty = false
     @StateObject private var propertyStore = PropertyStore(repository: PreviewPropertyRepository())
     @StateObject private var gradeProfileStore = GradeProfileStore(repository: PreviewGradeProfileRepository())
+    @StateObject private var subscriptionManager = SubscriptionManager()
 
     var body: some View {
         AddPropertySheet(didAddProperty: $didAddProperty)
             .environmentObject(propertyStore)
             .environmentObject(gradeProfileStore)
+            .environmentObject(subscriptionManager)
     }
 }
 

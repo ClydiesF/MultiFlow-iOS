@@ -1,11 +1,15 @@
 import SwiftUI
+import RevenueCatUI
 
 struct SettingsView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
+    @EnvironmentObject var subscriptionManager: SubscriptionManager
     @AppStorage("standardOperatingExpenseRate") private var standardOperatingExpenseRate = 35.0
     @AppStorage("cashflowBreakEvenThreshold") private var cashflowBreakEvenThreshold = 500.0
     @AppStorage("defaultMonthlyRentPerUnit") private var defaultMonthlyRentPerUnit = 1500.0
     @AppStorage("colorSchemePreference") private var colorSchemePreference = 0
+    @State private var showCustomerCenter = false
+    @State private var showPaywall = false
 
     var body: some View {
         ZStack {
@@ -16,6 +20,7 @@ struct SettingsView: View {
                     header
 
                     accountAppearanceSection
+                    subscriptionSection
                     estimatedDefaultsSection
                     glossarySection
 
@@ -34,6 +39,13 @@ struct SettingsView: View {
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showCustomerCenter) {
+            CustomerCenterView()
+        }
+        .sheet(isPresented: $showPaywall) {
+            PaywallView()
+                .environmentObject(subscriptionManager)
+        }
     }
 
 
@@ -170,6 +182,79 @@ struct SettingsView: View {
         .cardStyle()
     }
 
+    private var subscriptionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center) {
+                Text("Subscription")
+                    .font(.system(.headline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack)
+                Spacer()
+                Text(subscriptionManager.isPremium ? "Pro Active" : "Free")
+                    .font(.system(.caption, design: .rounded).weight(.bold))
+                    .foregroundStyle(subscriptionManager.isPremium ? Color.primaryYellow : Color.richBlack.opacity(0.5))
+            }
+
+            if !subscriptionManager.isPremium {
+                Button {
+                    showPaywall = true
+                } label: {
+                    HStack {
+                        Text("Upgrade to Pro")
+                            .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        Spacer()
+                        Image(systemName: "lock.open.fill")
+                    }
+                    .foregroundStyle(Color.richBlack)
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.primaryYellow, Color.orange.opacity(0.92)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button {
+                showCustomerCenter = true
+            } label: {
+                HStack {
+                    Text("Manage Subscription")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                }
+                .foregroundStyle(Color.richBlack)
+                .padding(.vertical, 12)
+                .padding(.horizontal, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.softGray)
+                )
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                Task { _ = await subscriptionManager.restorePurchases() }
+            } label: {
+                Text("Restore Purchases")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.72))
+            }
+            .buttonStyle(.plain)
+        }
+        .cardStyle()
+        .task {
+            await subscriptionManager.refreshCustomerInfo()
+        }
+    }
+
     private var glossarySection: some View {
         NavigationLink {
             GlossaryView()
@@ -245,5 +330,6 @@ struct SettingsView: View {
     NavigationStack {
         SettingsView()
             .environmentObject(AuthViewModel())
+            .environmentObject(SubscriptionManager())
     }
 }

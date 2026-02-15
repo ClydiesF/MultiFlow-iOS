@@ -21,4 +21,5 @@ struct RootView: View {
 #Preview {
     RootView()
         .environmentObject(AuthViewModel())
+        .environmentObject(SubscriptionManager())
 }
