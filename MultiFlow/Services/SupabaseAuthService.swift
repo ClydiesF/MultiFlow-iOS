@@ -79,6 +79,56 @@ final class SupabaseAuthService: AuthServiceProtocol {
         return mapped
     }
 
+    func sendPasswordReset(email: String, redirectTo: URL?) async throws {
+        try await client.auth.resetPasswordForEmail(email, redirectTo: redirectTo)
+    }
+
+    func verifyRecoveryToken(email: String, token: String) async throws {
+        let value = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { throw AuthServiceError.invalidRecoveryToken }
+
+        do {
+            _ = try await client.auth.verifyOTP(
+                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+                token: value,
+                type: .recovery
+            )
+        } catch {
+            // Some templates expose token hash instead of raw OTP.
+            do {
+                _ = try await client.auth.verifyOTP(tokenHash: value, type: .recovery)
+            } catch {
+                throw AuthServiceError.invalidRecoveryToken
+            }
+        }
+
+        currentUser = mappedUser(from: client.auth.currentUser)
+    }
+
+    func updatePassword(newPassword: String) async throws {
+        _ = try await client.auth.update(user: UserAttributes(password: newPassword))
+    }
+
+    func handleIncomingURL(_ url: URL) async throws -> Bool {
+        let isRecovery = isRecoveryLink(url)
+        do {
+            _ = try await client.auth.session(from: url)
+        } catch {
+            // Fallback for email clients that strip/mutate redirect flow.
+            // If token_hash is present, verify recovery directly.
+            if isRecovery, let tokenHash = firstValue(in: url, keys: ["token_hash", "token"]) {
+                _ = try await client.auth.verifyOTP(
+                    tokenHash: tokenHash,
+                    type: .recovery
+                )
+            } else {
+                throw error
+            }
+        }
+        currentUser = mappedUser(from: client.auth.currentUser)
+        return isRecovery
+    }
+
     func signOut() async throws {
         try await client.auth.signOut()
         currentUser = nil
@@ -88,6 +138,26 @@ final class SupabaseAuthService: AuthServiceProtocol {
         guard let user else { return nil }
         return AppUser(id: user.id.uuidString, email: user.email, isAnonymous: false)
     }
+
+    private func isRecoveryLink(_ url: URL) -> Bool {
+        firstValue(in: url, keys: ["type"])?.lowercased() == "recovery"
+    }
+
+    private func firstValue(in url: URL, keys: [String]) -> String? {
+        let pairs = ((url.query ?? "") + "&" + (url.fragment ?? ""))
+            .split(separator: "&")
+            .map(String.init)
+
+        for pair in pairs {
+            let tokens = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            guard tokens.count == 2 else { continue }
+            let key = tokens[0].lowercased()
+            if keys.contains(where: { $0.lowercased() == key }) {
+                return tokens[1].removingPercentEncoding ?? tokens[1]
+            }
+        }
+        return nil
+    }
 }
 
 private enum AuthServiceError: LocalizedError {
@@ -95,6 +165,7 @@ private enum AuthServiceError: LocalizedError {
     case sessionNotEstablishedAfterSignUp
     case sessionNotEstablishedAfterSignIn
     case sessionNotEstablishedAfterAppleSignIn
+    case invalidRecoveryToken
 
     var errorDescription: String? {
         switch self {
@@ -106,6 +177,8 @@ private enum AuthServiceError: LocalizedError {
             return "Sign-in succeeded, but no active session was returned. Please sign in again."
         case .sessionNotEstablishedAfterAppleSignIn:
             return "Apple sign-in succeeded, but no active session was returned. Please try again."
+        case .invalidRecoveryToken:
+            return "Invalid or expired recovery token. Request a new reset token and try again."
         }
     }
 }
