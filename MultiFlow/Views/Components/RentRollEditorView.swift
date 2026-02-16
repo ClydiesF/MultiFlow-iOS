@@ -15,6 +15,7 @@ struct RentRollEditorView: View {
     @State private var applyRentToAll = ""
     @State private var expandedUnitIDs: Set<UUID> = []
     @State private var showSquareFeet = false
+    @FocusState private var focusedRentUnitID: UUID?
 
     private var hasValidRentRow: Bool {
         Self.hasAtLeastOneValidRentRow(units)
@@ -63,10 +64,13 @@ struct RentRollEditorView: View {
 
     private var headerRow: some View {
         HStack {
-            Text("Rent Roll")
+            Text("Add Rent")
                 .font(.system(.headline, design: .rounded).weight(.semibold))
                 .foregroundStyle(Color.richBlack)
             Spacer()
+            Text("Tap rent to edit")
+                .font(.system(.caption2, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.richBlack.opacity(0.58))
             Button {
                 addUnit()
             } label: {
@@ -151,18 +155,40 @@ struct RentRollEditorView: View {
                     Text("Rent")
                         .font(.system(.caption2, design: .rounded).weight(.semibold))
                         .foregroundStyle(Color.richBlack.opacity(0.55))
-                    TextField("$0", text: Binding(
-                        get: { units[safe: index]?.monthlyRent ?? "" },
-                        set: { newValue in
-                            guard units.indices.contains(index) else { return }
-                            units[index].monthlyRent = InputFormatters.formatCurrencyLive(newValue)
-                            emitValidation()
-                        }
-                    ))
-                    .font(.system(.subheadline, design: .rounded).weight(.bold))
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 110)
-                    .keyboardType(.decimalPad)
+                    HStack(spacing: 6) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color.primaryYellow)
+
+                        TextField("$0", text: Binding(
+                            get: { units[safe: index]?.monthlyRent ?? "" },
+                            set: { newValue in
+                                guard units.indices.contains(index) else { return }
+                                units[index].monthlyRent = InputFormatters.formatCurrencyLive(newValue)
+                                emitValidation()
+                            }
+                        ))
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .multilineTextAlignment(.trailing)
+                        .keyboardType(.decimalPad)
+                        .focused($focusedRentUnitID, equals: unit.id)
+                    }
+                    .frame(width: 128)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.canvasWhite)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(
+                                focusedRentUnitID == unit.id
+                                ? Color.primaryYellow.opacity(0.85)
+                                : Color.richBlack.opacity(0.16),
+                                lineWidth: focusedRentUnitID == unit.id ? 2 : 1
+                            )
+                    )
                 }
 
                 Button {
@@ -293,6 +319,7 @@ struct RentRollEditorView: View {
     private func emitValidation() {
         onValidationChange?(hasValidRentRow)
     }
+
 }
 
 extension RentRollEditorView {

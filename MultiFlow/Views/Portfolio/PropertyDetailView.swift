@@ -2,6 +2,7 @@ import SwiftUI
 import Charts
 import UIKit
 import PhotosUI
+import MapKit
 
 struct PropertyDetailView: View {
     @EnvironmentObject var propertyStore: PropertyStore
@@ -69,12 +70,18 @@ struct PropertyDetailView: View {
     @State private var isOwnedToggle = false
     @State private var isSavingOwnership = false
     @State private var ownershipError: String?
+    @State private var isSavingBasics = false
+    @State private var basicsSaveError: String?
+    @State private var isPropertyBasicsExpanded = false
+    @StateObject private var locationSearchService = LocationSearchService()
+    @State private var isApplyingAddressSelection = false
     @State private var marketInsightSnapshot: MarketInsightSnapshot?
     @State private var isLoadingMarketInsights = false
     @State private var showMarketInsightPaywall = false
     @State private var marketInsightError: String?
     @State private var suggestedMarketRentPerUnit: Double?
     @State private var showDeepDive = false
+    @State private var persistedPropertySnapshot: Property?
 
     private let marketInsightsService = MarketInsightsService()
 
@@ -85,6 +92,7 @@ struct PropertyDetailView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 20) {
                     header
+                    propertyBasicsSection
                     if shouldShowCompleteAnalysisSection {
                         completeAnalysisSection
                     }
@@ -130,6 +138,14 @@ struct PropertyDetailView: View {
                 }
                 .disabled(isExporting)
                 .accessibilityLabel("Export deal summary")
+            }
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    dismissKeyboard()
+                }
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.primaryYellow)
             }
         }
         .sheet(isPresented: $showShare) {
@@ -216,7 +232,9 @@ struct PropertyDetailView: View {
         }
         .photosPicker(isPresented: $showPhotoLibraryPicker, selection: $selectedPhotoItem, matching: .images)
         .onAppear {
+            syncPersistedSnapshot()
             simpleExpenseRate = String(standardOperatingExpenseRate)
+            syncBasicInputs(from: activeProperty)
             syncInlineRentRollInputs(from: activeProperty)
             syncTaxAssumptionsInputs(from: activeProperty)
             isOwnedToggle = activeProperty.isOwned == true
@@ -236,6 +254,7 @@ struct PropertyDetailView: View {
         }
         .onChange(of: activeProperty.id) { _, _ in
             if !isEditingAnalysis {
+                syncBasicInputs(from: activeProperty)
                 syncInlineRentRollInputs(from: activeProperty)
                 syncTaxAssumptionsInputs(from: activeProperty)
                 isOwnedToggle = activeProperty.isOwned == true
@@ -356,6 +375,70 @@ struct PropertyDetailView: View {
                     .foregroundStyle(.red)
             }
         }
+    }
+
+    private var propertyBasicsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isPropertyBasicsExpanded.toggle()
+                }
+            } label: {
+                HStack {
+                    Text("Property Basics")
+                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Spacer()
+                    Image(systemName: isPropertyBasicsExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.richBlack.opacity(0.65))
+                }
+            }
+            .buttonStyle(.plain)
+
+            if isPropertyBasicsExpanded {
+                LabeledTextField(title: "Address", text: $address, keyboard: .default)
+                    .onChange(of: address) { _, newValue in
+                        updateBasicAddressAutocompleteQuery(with: newValue)
+                    }
+
+                basicAutoFillAddressButton
+
+                if shouldShowBasicAddressSuggestions {
+                    basicAddressSuggestionsView
+                }
+
+                HStack(spacing: 10) {
+                    LabeledTextField(title: "City", text: $city, keyboard: .default)
+                    LabeledTextField(title: "State", text: $state, keyboard: .default)
+                        .onChange(of: state) { _, newValue in
+                            state = StateAbbreviationFormatter.abbreviate(newValue)
+                        }
+                    LabeledTextField(title: "ZIP", text: $zipCode, keyboard: .numberPad)
+                        .onChange(of: zipCode) { _, newValue in
+                            zipCode = String(newValue.filter(\.isNumber).prefix(5))
+                        }
+                }
+
+                LabeledTextField(title: "Purchase Price", text: $purchasePrice, keyboard: .decimalPad)
+                    .onChange(of: purchasePrice) { _, newValue in
+                        purchasePrice = InputFormatters.formatCurrencyLive(newValue)
+                    }
+
+                if let basicsSaveError {
+                    Text(basicsSaveError)
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(.red)
+                }
+
+                Button(isSavingBasics ? "Saving..." : "Save Basics") {
+                    Task { await saveBasicDetails() }
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(isSavingBasics)
+            }
+        }
+        .cardStyle()
     }
 
     private var ownershipSection: some View {
@@ -482,6 +565,9 @@ struct PropertyDetailView: View {
                     Text("Used for the Tax Incentives pillar.")
                         .font(.system(.footnote, design: .rounded))
                         .foregroundStyle(Color.richBlack.opacity(0.62))
+                    Capsule(style: .continuous)
+                        .fill(Color.primaryYellow)
+                        .frame(width: 52, height: 5)
                 }
                 Spacer()
             }
@@ -528,6 +614,9 @@ struct PropertyDetailView: View {
                         Text("Upfront capital needed. Tap to run scenarios.")
                             .font(.system(.footnote, design: .rounded))
                             .foregroundStyle(Color.richBlack.opacity(0.62))
+                        Capsule(style: .continuous)
+                            .fill(Color.primaryYellow)
+                            .frame(width: 52, height: 5)
                     }
                     Spacer()
                     HStack(spacing: 6) {
@@ -596,6 +685,9 @@ struct PropertyDetailView: View {
                     Text("Inline editing is live. Save when ready.")
                         .font(.system(.footnote, design: .rounded))
                         .foregroundStyle(Color.richBlack.opacity(0.62))
+                    Capsule(style: .continuous)
+                        .fill(Color.primaryYellow)
+                        .frame(width: 52, height: 5)
                 }
                 Spacer()
                 if isEditingAnalysis {
@@ -730,7 +822,8 @@ struct PropertyDetailView: View {
         .cardStyle()
     }
     private var photoChip: some View {
-        Button {
+        let needsPhoto = activeProperty.imageURL.isEmpty
+        return Button {
             showPhotoSourcePopover = true
         } label: {
             HStack(spacing: 6) {
@@ -739,19 +832,24 @@ struct PropertyDetailView: View {
                         .tint(Color.primaryYellow)
                         .scaleEffect(0.75)
                 } else {
-                    Image(systemName: activeProperty.imageURL.isEmpty ? "photo" : "photo.fill")
-                        .font(.system(size: 10, weight: .bold))
+                    Image(systemName: needsPhoto ? "plus.circle.fill" : "photo.fill")
+                        .font(.system(size: 11, weight: .bold))
                 }
-                Text(activeProperty.imageURL.isEmpty ? "Add Photo" : "Update Photo")
-                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                Text(needsPhoto ? "Add Photo" : "Update Photo")
+                    .font(.system(.caption, design: .rounded).weight(.bold))
             }
-            .foregroundStyle(Color.richBlack)
+            .foregroundStyle(needsPhoto ? Color.richBlack : Color.richBlack.opacity(0.9))
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
                 Capsule(style: .continuous)
-                    .fill(Color.softGray)
+                    .fill(needsPhoto ? Color.primaryYellow.opacity(0.30) : Color.softGray)
             )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(needsPhoto ? Color.primaryYellow.opacity(0.9) : Color.richBlack.opacity(0.1), lineWidth: 1)
+            )
+            .shadow(color: needsPhoto ? Color.primaryYellow.opacity(0.30) : .clear, radius: 6, x: 0, y: 2)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Update property photo")
@@ -821,6 +919,9 @@ struct PropertyDetailView: View {
                     Text("Core performance snapshot")
                         .font(.system(.footnote, design: .rounded))
                         .foregroundStyle(Color.richBlack.opacity(0.6))
+                    Capsule(style: .continuous)
+                        .fill(Color.primaryYellow)
+                        .frame(width: 52, height: 5)
                 }
                 Spacer()
                 if let metrics = analysisMetrics {
@@ -838,26 +939,8 @@ struct PropertyDetailView: View {
             }
 
             if let metrics = analysisMetrics {
-                let annualCash = metrics.annualCashFlow
-                let monthlyCash = annualCash / 12
-                let noi = metrics.netOperatingIncome
-                let capRate = metrics.capRate
-                let cashOnCash = metrics.cashOnCash
-                let dcr = metrics.debtCoverageRatio
-
-                VStack(spacing: 12) {
-                    HStack(spacing: 12) {
-                        summaryTile(title: "NOI", value: Formatters.currency.string(from: NSNumber(value: noi)) ?? "$0", infoType: .netOperatingIncome)
-                        summaryTile(title: "Monthly Cash Flow", value: Formatters.currency.string(from: NSNumber(value: monthlyCash)) ?? "$0", infoType: .cashFlow)
-                    }
-                    HStack(spacing: 12) {
-                        summaryTile(title: "Annual Cash Flow", value: Formatters.currency.string(from: NSNumber(value: annualCash)) ?? "$0")
-                        summaryTile(title: "Cap Rate", value: Formatters.percent.string(from: NSNumber(value: capRate)) ?? "0%", infoType: .capRate)
-                    }
-                    HStack(spacing: 12) {
-                        summaryTile(title: "Cash-on-Cash", value: Formatters.percent.string(from: NSNumber(value: cashOnCash)) ?? "0%", infoType: .cashOnCash)
-                        summaryTile(title: "DCR", value: String(format: "%.2f", dcr), infoType: .dcr)
-                    }
+                SummaryMetricsGrid(metrics: metrics) { metric in
+                    infoMetric = metric
                 }
             } else {
                 Text("Add financing inputs to show NOI, cash flow, cap rate, cash-on-cash, and DCR.")
@@ -866,21 +949,6 @@ struct PropertyDetailView: View {
             }
         }
         .cardStyle()
-    }
-
-    @ViewBuilder
-    private func summaryTile(title: String, value: String, infoType: MetricInfoType? = nil) -> some View {
-        if let infoType {
-            Button {
-                infoMetric = infoType
-            } label: {
-                summaryTileContent(title: title, value: value, showsInfo: true)
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Shows metric definition")
-        } else {
-            summaryTileContent(title: title, value: value, showsInfo: false)
-        }
     }
 
     private func summaryTileContent(title: String, value: String, showsInfo: Bool) -> some View {
@@ -928,12 +996,24 @@ struct PropertyDetailView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                checklistRow("Add rent roll", complete: hasCompletedRentRoll(for: activeProperty))
-                checklistRow("Add capex/reno", complete: hasCapexData(for: activeProperty))
-                checklistRow("Review expenses", complete: hasReviewedExpenses(for: activeProperty))
+                checklistRow(
+                    "Add rent roll",
+                    complete: hasCompletedRentRoll(for: activeProperty),
+                    destinationHint: "Update in Rent Roll section"
+                )
+                checklistRow(
+                    "Add capex/reno",
+                    complete: hasCapexData(for: activeProperty),
+                    destinationHint: "Update in Cash to Close Lab or Analysis Lab"
+                )
+                checklistRow(
+                    "Review expenses",
+                    complete: hasReviewedExpenses(for: activeProperty),
+                    destinationHint: "Update in Operating Expenses section"
+                )
             }
 
-            Text("Use inline modules below to update rent, expenses, and strategy assumptions.")
+            Text("Use the labeled sections below to complete each missing input.")
                 .font(.system(.footnote, design: .rounded).weight(.semibold))
                 .foregroundStyle(Color.richBlack.opacity(0.62))
         }
@@ -944,14 +1024,23 @@ struct PropertyDetailView: View {
         !missingAnalysisInputs(for: activeProperty).isEmpty
     }
 
-    private func checklistRow(_ title: String, complete: Bool) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: complete ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(complete ? Color.primaryYellow : Color.richBlack.opacity(0.35))
-            Text(title)
-                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                .foregroundStyle(Color.richBlack.opacity(complete ? 1 : 0.65))
-            Spacer()
+    private func checklistRow(_ title: String, complete: Bool, destinationHint: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Image(systemName: complete ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(complete ? Color.primaryYellow : Color.richBlack.opacity(0.35))
+                Text(title)
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(complete ? 1 : 0.65))
+                Spacer()
+            }
+
+            if !complete {
+                Text(destinationHint)
+                    .font(.system(.caption2, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.52))
+                    .padding(.leading, 26)
+            }
         }
     }
 
@@ -1246,6 +1335,176 @@ struct PropertyDetailView: View {
         taxAssumptionError = nil
     }
 
+    private func syncBasicInputs(from property: Property) {
+        address = property.address
+        city = property.city ?? ""
+        state = property.state ?? ""
+        zipCode = property.zipCode ?? ""
+        purchasePrice = Formatters.currencyTwo.string(from: NSNumber(value: property.purchasePrice)) ?? String(property.purchasePrice)
+        basicsSaveError = nil
+    }
+
+    private var shouldShowBasicAddressSuggestions: Bool {
+        isPropertyBasicsExpanded
+        && !isApplyingAddressSelection
+        && subscriptionManager.checkAccess(feature: .autoFillAddress)
+        && !locationSearchService.results.isEmpty
+        && address.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3
+    }
+
+    private var basicAutoFillAddressButton: some View {
+        Button {
+            if subscriptionManager.checkAccess(feature: .autoFillAddress) {
+                let query = address.trimmingCharacters(in: .whitespacesAndNewlines)
+                if query.count >= 3 {
+                    updateBasicAddressAutocompleteQuery(with: query)
+                } else {
+                    basicsSaveError = "Enter at least 3 address characters for Auto-Fill."
+                }
+            } else {
+                showMarketInsightPaywall = true
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Auto-Fill Address")
+                    .font(.system(.footnote, design: .rounded).weight(.bold))
+                if !subscriptionManager.checkAccess(feature: .autoFillAddress) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                Spacer()
+            }
+            .foregroundStyle(Color.richBlack)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.cardSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var basicAddressSuggestionsView: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(locationSearchService.results.prefix(5).enumerated()), id: \.offset) { _, completion in
+                Button {
+                    applyBasicAddressCompletion(completion)
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "mappin.and.ellipse")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.primaryYellow)
+                            .padding(.top, 1)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(completion.title)
+                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                                .foregroundStyle(Color.richBlack)
+                                .lineLimit(1)
+                            if !completion.subtitle.isEmpty {
+                                Text(completion.subtitle)
+                                    .font(.system(.caption, design: .rounded).weight(.medium))
+                                    .foregroundStyle(Color.richBlack.opacity(0.62))
+                                    .lineLimit(1)
+                            }
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if completion != locationSearchService.results.prefix(5).last {
+                    Divider().opacity(0.22)
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.cardSurface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.black.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    private func updateBasicAddressAutocompleteQuery(with input: String) {
+        guard subscriptionManager.checkAccess(feature: .autoFillAddress) else {
+            locationSearchService.query = ""
+            locationSearchService.results = []
+            return
+        }
+        guard !isApplyingAddressSelection else { return }
+        let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.count >= 3 {
+            locationSearchService.query = query
+        } else {
+            locationSearchService.query = ""
+            locationSearchService.results = []
+        }
+    }
+
+    private func applyBasicAddressCompletion(_ completion: MKLocalSearchCompletion) {
+        guard subscriptionManager.checkAccess(feature: .autoFillAddress) else {
+            showMarketInsightPaywall = true
+            return
+        }
+        Task { @MainActor in
+            isApplyingAddressSelection = true
+            defer { isApplyingAddressSelection = false }
+
+            do {
+                if let mapItem = try await locationSearchService.select(completion) {
+                    applyPlacemarkToBasics(mapItem.placemark, fallbackAddress: completion.title)
+                } else {
+                    address = completion.title
+                }
+            } catch {
+                address = completion.title
+            }
+
+            basicsSaveError = nil
+            locationSearchService.query = ""
+            locationSearchService.results = []
+        }
+    }
+
+    private func applyPlacemarkToBasics(_ placemark: MKPlacemark, fallbackAddress: String) {
+        let streetNumber = placemark.subThoroughfare?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let streetName = placemark.thoroughfare?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let street = [streetNumber, streetName]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        address = street.isEmpty ? fallbackAddress : street
+
+        if let cityValue = placemark.locality?.trimmingCharacters(in: .whitespacesAndNewlines), !cityValue.isEmpty {
+            city = cityValue
+        }
+
+        if let stateValue = placemark.administrativeArea?.trimmingCharacters(in: .whitespacesAndNewlines), !stateValue.isEmpty {
+            state = String(stateValue.prefix(2)).uppercased()
+        }
+
+        if let postalCode = placemark.postalCode {
+            let normalizedZip = String(postalCode.filter(\.isNumber).prefix(5))
+            if !normalizedZip.isEmpty {
+                zipCode = normalizedZip
+            }
+        }
+    }
+
     private func scheduleInlineRentRollAutosave() {
         inlineRentRollAutosaveTask?.cancel()
         guard !isEditingAnalysis else { return }
@@ -1335,6 +1594,44 @@ struct PropertyDetailView: View {
             try await propertyStore.updateProperty(updated)
         } catch {
             ownershipError = error.localizedDescription
+        }
+    }
+
+    private func saveBasicDetails() async {
+        guard let propertyId = activeProperty.id,
+              let index = propertyStore.properties.firstIndex(where: { $0.id == propertyId }) else {
+            basicsSaveError = "Property was not found. Reload and try again."
+            return
+        }
+
+        let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAddress.isEmpty else {
+            basicsSaveError = "Address is required."
+            return
+        }
+
+        guard let parsedPurchasePrice = InputFormatters.parseCurrency(purchasePrice), parsedPurchasePrice > 0 else {
+            basicsSaveError = "Enter a valid purchase price."
+            return
+        }
+
+        basicsSaveError = nil
+        isSavingBasics = true
+        defer { isSavingBasics = false }
+
+        var updated = propertyStore.properties[index]
+        updated.address = trimmedAddress
+        updated.city = city.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : city.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.state = state.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : state.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.zipCode = zipCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : zipCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.purchasePrice = parsedPurchasePrice
+
+        do {
+            try await propertyStore.updateProperty(updated)
+            persistedPropertySnapshot = updated
+            syncBasicInputs(from: updated)
+        } catch {
+            basicsSaveError = error.localizedDescription
         }
     }
 
@@ -1495,7 +1792,7 @@ struct PropertyDetailView: View {
 
             return MetricsEngine.computeMetrics(property: draft)
         }
-        return MetricsEngine.computeMetrics(property: liveDisplayProperty)
+        return MetricsEngine.computeMetrics(property: activeProperty)
     }
 
     private var draftProperty: Property? {
@@ -1505,7 +1802,7 @@ struct PropertyDetailView: View {
               let insuranceValue = InputFormatters.parseCurrency(annualInsurance),
               let rentUnits = draftRentUnits else { return nil }
 
-        var property = activeProperty
+        var property = persistedProperty
         property.address = address
         property.city = city.isEmpty ? nil : city
         property.state = state.isEmpty ? nil : state
@@ -1694,8 +1991,19 @@ struct PropertyDetailView: View {
         if isEditingAnalysis, let draftProperty {
             return draftProperty
         }
-        guard let id = property.id else { return property }
-        return propertyStore.properties.first { $0.id == id } ?? property
+        return persistedProperty
+    }
+
+    private var persistedProperty: Property {
+        persistedPropertySnapshot ?? property
+    }
+
+    private func syncPersistedSnapshot() {
+        guard let id = property.id else {
+            persistedPropertySnapshot = property
+            return
+        }
+        persistedPropertySnapshot = propertyStore.properties.first(where: { $0.id == id }) ?? property
     }
 
     private var liveDisplayProperty: Property {
@@ -1781,6 +2089,7 @@ struct PropertyDetailView: View {
         propertyStore.properties[index].annualInsurance = scenario.annualInsurance
         propertyStore.properties[index].loanTermYears = scenario.termYears
         let updated = propertyStore.properties[index]
+        persistedPropertySnapshot = updated
 
         Task {
             do {
@@ -1798,7 +2107,11 @@ struct PropertyDetailView: View {
 
         propertyStore.properties[index].downPaymentPercent = scenario.downPaymentPercent
         propertyStore.properties[index].renoBudget = scenario.renoReserve
+        propertyStore.properties[index].analysisCompleteness = analysisCompletenessState(for: propertyStore.properties[index]).rawValue
+        propertyStore.properties[index].missingAnalysisInputs = missingAnalysisInputs(for: propertyStore.properties[index])
         let updated = propertyStore.properties[index]
+        persistedPropertySnapshot = updated
+        renoBudget = Formatters.currencyTwo.string(from: NSNumber(value: scenario.renoReserve)) ?? "\(scenario.renoReserve)"
 
         Task {
             do {
@@ -2009,12 +2322,107 @@ struct PropertyDetailView: View {
 
         return nil
     }
+
+    private func dismissKeyboard() {
+#if canImport(UIKit)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+#endif
+    }
 }
 
 private struct CapexItemInput: Identifiable {
     let id = UUID()
     var name: String
     var amount: String
+}
+
+private struct SummaryMetricsGrid: View {
+    let metrics: DealMetrics
+    let onTapInfo: (MetricInfoType) -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                metricTile(
+                    title: "NOI",
+                    value: Formatters.currency.string(from: NSNumber(value: metrics.netOperatingIncome)) ?? "$0",
+                    info: .netOperatingIncome
+                )
+                metricTile(
+                    title: "Monthly Cash Flow",
+                    value: Formatters.currency.string(from: NSNumber(value: metrics.annualCashFlow / 12.0)) ?? "$0",
+                    info: .cashFlow
+                )
+            }
+
+            HStack(spacing: 12) {
+                staticTile(
+                    title: "Annual Cash Flow",
+                    value: Formatters.currency.string(from: NSNumber(value: metrics.annualCashFlow)) ?? "$0"
+                )
+                metricTile(
+                    title: "Cap Rate",
+                    value: Formatters.percent.string(from: NSNumber(value: metrics.capRate)) ?? "0%",
+                    info: .capRate
+                )
+            }
+
+            HStack(spacing: 12) {
+                metricTile(
+                    title: "Cash-on-Cash",
+                    value: Formatters.percent.string(from: NSNumber(value: metrics.cashOnCash)) ?? "0%",
+                    info: .cashOnCash
+                )
+                metricTile(
+                    title: "DCR",
+                    value: String(format: "%.2f", metrics.debtCoverageRatio),
+                    info: .dcr
+                )
+            }
+        }
+    }
+
+    private func metricTile(title: String, value: String, info: MetricInfoType) -> some View {
+        Button {
+            onTapInfo(info)
+        } label: {
+            tileContent(title: title, value: value, showsInfo: true)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Shows metric definition")
+    }
+
+    private func staticTile(title: String, value: String) -> some View {
+        tileContent(title: title, value: value, showsInfo: false)
+    }
+
+    private func tileContent(title: String, value: String, showsInfo: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.6))
+                if showsInfo {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.richBlack.opacity(0.55))
+                }
+            }
+            Text(value)
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.richBlack)
+        }
+        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.cardSurface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primaryYellow.opacity(0.75), lineWidth: 1)
+        )
+    }
 }
 
 #Preview {

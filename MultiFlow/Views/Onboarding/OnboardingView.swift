@@ -117,12 +117,18 @@ struct OnboardingView: View {
     }
 
     private var pageIndicator: some View {
-        HStack(spacing: 8) {
-            ForEach(0..<pages.count, id: \.self) { index in
-                Capsule(style: .continuous)
-                    .fill(index == selection ? Color.primaryYellow : Color.softGray)
-                    .frame(width: index == selection ? 26 : 10, height: 8)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.85), value: selection)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Step \(selection + 1) of \(pages.count)")
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.richBlack.opacity(0.62))
+
+            HStack(spacing: 8) {
+                ForEach(0..<pages.count, id: \.self) { index in
+                    Capsule(style: .continuous)
+                        .fill(index == selection ? Color.primaryYellow : Color.softGray)
+                        .frame(width: index == selection ? 26 : 10, height: 8)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: selection)
+                }
             }
         }
         .padding(.horizontal, 24)

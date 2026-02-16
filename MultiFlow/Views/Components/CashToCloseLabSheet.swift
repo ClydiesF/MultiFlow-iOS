@@ -107,7 +107,7 @@ struct CashToCloseLabSheet: View {
                     .font(.system(.subheadline, design: .rounded).weight(.bold))
                     .foregroundStyle(Color.richBlack)
             }
-            Slider(value: $downPaymentPercent, in: 10...50, step: 0.5)
+            Slider(value: $downPaymentPercent, in: 0...100, step: 0.5)
                 .tint(Color.primaryYellow)
 
             HStack {
