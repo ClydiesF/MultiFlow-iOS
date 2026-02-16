@@ -34,6 +34,9 @@ struct MultiFlowApp: App {
                 .task(id: authViewModel.user?.id) {
                     await subscriptionManager.syncAuthUser(authViewModel.user?.id)
                 }
+                .onOpenURL { url in
+                    Task { await authViewModel.handleIncomingURL(url) }
+                }
         }
     }
 

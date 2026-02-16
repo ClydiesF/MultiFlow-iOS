@@ -10,6 +10,11 @@ struct SettingsView: View {
     @AppStorage("colorSchemePreference") private var colorSchemePreference = 0
     @State private var showCustomerCenter = false
     @State private var showPaywall = false
+    @State private var showChangePasswordSheet = false
+    @State private var newPassword = ""
+    @State private var confirmPassword = ""
+    @State private var passwordUpdateError: String?
+    private let shareAppURL = URL(string: "https://multiflow.app")!
 
     var body: some View {
         ZStack {
@@ -23,6 +28,7 @@ struct SettingsView: View {
                     subscriptionSection
                     estimatedDefaultsSection
                     glossarySection
+                    shareAppSection
 
                     Button("Sign Out") {
                         authViewModel.signOut()
@@ -45,6 +51,51 @@ struct SettingsView: View {
         .sheet(isPresented: $showPaywall) {
             PaywallView()
                 .environmentObject(subscriptionManager)
+        }
+        .sheet(isPresented: $showChangePasswordSheet) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Change Password")
+                        .font(.system(.title3, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.richBlack)
+
+                    Text("Set a new password for your account.")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.68))
+
+                    LabeledSecureField(title: "New Password", text: $newPassword)
+                    LabeledSecureField(title: "Confirm Password", text: $confirmPassword)
+
+                    if let passwordUpdateError {
+                        Text(passwordUpdateError)
+                            .font(.system(.footnote, design: .rounded).weight(.semibold))
+                            .foregroundStyle(.red)
+                    }
+
+                    Button("Update Password") {
+                        Task {
+                            passwordUpdateError = nil
+                            guard newPassword.count >= 8 else {
+                                passwordUpdateError = "Password must be at least 8 characters."
+                                return
+                            }
+                            guard newPassword == confirmPassword else {
+                                passwordUpdateError = "Passwords do not match."
+                                return
+                            }
+                            let success = await authViewModel.updatePassword(newPassword: newPassword)
+                            if success {
+                                showChangePasswordSheet = false
+                            }
+                        }
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+
+                    Spacer()
+                }
+                .padding(24)
+                .background(CanvasBackground())
+            }
         }
     }
 
@@ -77,6 +128,26 @@ struct SettingsView: View {
                 Text("Dark").tag(2)
             }
             .pickerStyle(.segmented)
+
+            Divider().background(Color.richBlack.opacity(0.1))
+
+            Button {
+                passwordUpdateError = nil
+                newPassword = ""
+                confirmPassword = ""
+                showChangePasswordSheet = true
+            } label: {
+                HStack {
+                    Text("Change Password")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(Color.richBlack)
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
         }
         .cardStyle()
     }
@@ -274,6 +345,50 @@ struct SettingsView: View {
                         .font(.system(.headline, design: .rounded).weight(.semibold))
                         .foregroundStyle(Color.richBlack)
                     Text("Common real-estate terms and formulas")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.65))
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.4))
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.cardSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.richBlack.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var shareAppSection: some View {
+        ShareLink(
+            item: shareAppURL,
+            message: Text("Check out MultiFlow: Property Evaluator."),
+            preview: SharePreview("MultiFlow: Property Evaluator", image: Image("logo"))
+        ) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(Color.primaryYellow.opacity(0.2))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.richBlack)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Share MultiFlow")
+                        .font(.system(.headline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Text("Invite friends to download the app")
                         .font(.system(.footnote, design: .rounded))
                         .foregroundStyle(Color.richBlack.opacity(0.65))
                 }

@@ -9,6 +9,14 @@ struct AuthView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var appear = false
+    @State private var showResetSheet = false
+    @State private var showSetPasswordSheet = false
+    @State private var shouldPresentSetPasswordAfterResetDismiss = false
+    @State private var resetEmail = ""
+    @State private var resetToken = ""
+    @State private var setPassword = ""
+    @State private var setConfirmPassword = ""
+    @State private var setPasswordError: String?
     private let termsURL = URL(string: "https://multiflow.app/terms")
     private let privacyURL = URL(string: "https://multiflow.app/privacy")
 
@@ -30,6 +38,13 @@ struct AuthView: View {
                             .fill(Color.cardSurface)
                             .shadow(color: Color.black.opacity(0.06), radius: 18, x: 0, y: 10)
                     )
+
+                    if let notice = authViewModel.authNotice {
+                        Text(notice)
+                            .font(.system(.footnote, design: .rounded))
+                            .foregroundStyle(Color.richBlack.opacity(0.72))
+                            .multilineTextAlignment(.center)
+                    }
 
                     if let error = authViewModel.authError {
                         Text(error)
@@ -73,6 +88,16 @@ struct AuthView: View {
                     .font(.system(.footnote, design: .rounded).weight(.semibold))
                     .foregroundStyle(Color.richBlack.opacity(0.7))
 
+                    if isLogin {
+                        Button("Forgot password?") {
+                            resetEmail = email
+                            resetToken = ""
+                            showResetSheet = true
+                        }
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.primaryYellow)
+                    }
+
                     legalFooter
                 }
                 .padding(24)
@@ -82,6 +107,108 @@ struct AuthView: View {
             }
         }
         .onAppear { appear = true }
+        .sheet(isPresented: $showResetSheet, onDismiss: {
+            guard shouldPresentSetPasswordAfterResetDismiss else { return }
+            shouldPresentSetPasswordAfterResetDismiss = false
+            showSetPasswordSheet = true
+        }) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Password Recovery")
+                        .font(.system(.title3, design: .rounded).weight(.bold))
+                    Text("Request a reset token, then enter it below.")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.65))
+                    LabeledTextField(title: "Email", text: $resetEmail, keyboard: .emailAddress)
+
+                    LabeledTextField(title: "Recovery Token", text: $resetToken, keyboard: .default)
+
+                    if let notice = authViewModel.authNotice {
+                        Text(notice)
+                            .font(.system(.footnote, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.richBlack.opacity(0.72))
+                    }
+
+                    if let error = authViewModel.authError {
+                        Text(error)
+                            .font(.system(.footnote, design: .rounded).weight(.semibold))
+                            .foregroundStyle(.red)
+                    }
+
+                    Button("Send Token") {
+                        Task {
+                            await authViewModel.sendPasswordReset(email: resetEmail)
+                        }
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+
+                    Button("Verify Token") {
+                        Task {
+                            let success = await authViewModel.verifyRecoveryToken(
+                                email: resetEmail,
+                                token: resetToken
+                            )
+                            if success {
+                                shouldPresentSetPasswordAfterResetDismiss = true
+                                showResetSheet = false
+                                await MainActor.run {
+                                    setPassword = ""
+                                    setConfirmPassword = ""
+                                    setPasswordError = nil
+                                }
+                            }
+                        }
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    Spacer()
+                }
+                .padding(24)
+                .background(CanvasBackground())
+            }
+        }
+        .sheet(isPresented: $showSetPasswordSheet) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Set New Password")
+                        .font(.system(.title3, design: .rounded).weight(.bold))
+                    Text("Your token is verified. Enter a new password to finish recovery.")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.65))
+
+                    LabeledSecureField(title: "New Password", text: $setPassword)
+                    LabeledSecureField(title: "Confirm Password", text: $setConfirmPassword)
+
+                    if let setPasswordError {
+                        Text(setPasswordError)
+                            .font(.system(.footnote, design: .rounded).weight(.semibold))
+                            .foregroundStyle(.red)
+                    }
+
+                    Button("Update Password") {
+                        Task {
+                            setPasswordError = nil
+                            guard setPassword.count >= 8 else {
+                                setPasswordError = "Password must be at least 8 characters."
+                                return
+                            }
+                            guard setPassword == setConfirmPassword else {
+                                setPasswordError = "Passwords do not match."
+                                return
+                            }
+                            let success = await authViewModel.updatePassword(newPassword: setPassword)
+                            if success {
+                                showSetPasswordSheet = false
+                            }
+                        }
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+
+                    Spacer()
+                }
+                .padding(24)
+                .background(CanvasBackground())
+            }
+        }
     }
 
     private var header: some View {
