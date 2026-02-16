@@ -712,6 +712,7 @@ private var previewProperty: Property {
     )
 }
 
+@MainActor
 private func previewSubscriptionManager(isPremium: Bool) -> SubscriptionManager {
     let manager = SubscriptionManager()
     manager.setPreviewPremium(isPremium)
