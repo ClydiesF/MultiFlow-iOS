@@ -203,18 +203,36 @@ struct MortgageDetailSheet: View {
                     .font(.system(.subheadline, design: .rounded).weight(.semibold))
                     .foregroundStyle(Color.richBlack)
                 Spacer()
+                if isPaidOffScenario {
+                    Text("Paid Off")
+                        .font(.system(.caption2, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.primaryYellow)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.richBlack)
+                        )
+                }
                 Text("\(downPaymentPercent, specifier: "%.1f")%")
                     .font(.system(.subheadline, design: .rounded).weight(.bold))
                     .foregroundStyle(Color.richBlack)
             }
-            Slider(value: $downPaymentPercent, in: 10...50, step: 0.5)
+            Slider(value: $downPaymentPercent, in: 0...100, step: 0.5)
                 .tint(Color.primaryYellow)
+                .onChange(of: downPaymentPercent) { _, newValue in
+                    if newValue >= 100 {
+                        interestRateText = "0"
+                    }
+                }
 
             HStack(spacing: 8) {
                 scenarioField("Interest %", text: $interestRateText, placeholder: "6.50")
                     .onChange(of: interestRateText) { _, newValue in
                         interestRateText = InputFormatters.sanitizeDecimal(newValue)
                     }
+                    .disabled(isPaidOffScenario)
+                    .opacity(isPaidOffScenario ? 0.55 : 1.0)
                 scenarioField("Annual Taxes", text: $annualTaxesText, placeholder: "$0")
                     .onChange(of: annualTaxesText) { _, newValue in
                         annualTaxesText = InputFormatters.formatCurrencyLive(newValue)
@@ -381,7 +399,8 @@ struct MortgageDetailSheet: View {
     }
 
     private var currentScenario: MortgageScenarioValues? {
-        guard let interest = Double(interestRateText), interest > 0 else { return nil }
+        guard let interest = Double(interestRateText), interest >= 0 else { return nil }
+        if !isPaidOffScenario && interest == 0 { return nil }
         let taxes = InputFormatters.parseCurrency(annualTaxesText) ?? 0
         let insurance = InputFormatters.parseCurrency(annualInsuranceText) ?? 0
         return MortgageScenarioValues(
@@ -403,6 +422,10 @@ struct MortgageDetailSheet: View {
             annualTaxes: scenario.annualTaxes,
             annualInsurance: scenario.annualInsurance
         )
+    }
+
+    private var isPaidOffScenario: Bool {
+        downPaymentPercent >= 100
     }
 
     private var rateSensitivityText: String {

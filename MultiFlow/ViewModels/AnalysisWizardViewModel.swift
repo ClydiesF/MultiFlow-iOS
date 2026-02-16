@@ -53,7 +53,8 @@ final class AnalysisWizardViewModel: ObservableObject {
             return missing
         case 1:
             var missing = Set<AnalysisWizardField>()
-            if (Double(interestRate) ?? 0) <= 0 { missing.insert(.interestRate) }
+            let isPaidOff = downPaymentPercent >= 100
+            if !isPaidOff && (Double(interestRate) ?? 0) <= 0 { missing.insert(.interestRate) }
             return missing
         default:
             return []
@@ -72,6 +73,8 @@ final class AnalysisWizardViewModel: ObservableObject {
             if propertyType == .tenPlus && (Int(exactUnitsForTenPlus) ?? 0) < 10 { return .exactUnitsForTenPlus }
             return nil
         case 1:
+            let isPaidOff = downPaymentPercent >= 100
+            if isPaidOff { return nil }
             return (Double(interestRate) ?? 0) > 0 ? nil : .interestRate
         default:
             return nil

@@ -16,6 +16,7 @@ struct PortfolioView: View {
     @State private var showRestoreErrorToast = false
     @State private var restoreErrorMessage: String?
     @State private var selectedPropertyForDetail: Property?
+    @State private var isShowingPropertyDetail = false
 
     var body: some View {
         ZStack {
@@ -34,14 +35,13 @@ struct PortfolioView: View {
                     } else if propertyStore.properties.isEmpty {
                         emptyState
                     } else {
-                        LazyVStack(spacing: 34) {
+                        LazyVStack(spacing: 30) {
                             ForEach(propertyStore.properties) { property in
-                                PropertyCardView(property: property) { updatedOffer in
-                                    saveStrategyOffer(updatedOffer, for: property)
-                                } onOpenDetail: {
+                                PropertyCardView(property: property, onOpenDetail: {
                                     selectedPropertyForDetail = property
-                                }
-                                .padding(.bottom, 8)
+                                    isShowingPropertyDetail = true
+                                })
+                                .padding(.bottom, 4)
                             }
                         }
                     }
@@ -70,10 +70,14 @@ struct PortfolioView: View {
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(item: $selectedPropertyForDetail) { property in
-            PropertyDetailView(property: property)
-                .environmentObject(propertyStore)
-                .environmentObject(gradeProfileStore)
+        .navigationDestination(isPresented: $isShowingPropertyDetail) {
+            if let property = selectedPropertyForDetail {
+                PropertyDetailView(property: property)
+                    .environmentObject(propertyStore)
+                    .environmentObject(gradeProfileStore)
+            } else {
+                EmptyView()
+            }
         }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -318,25 +322,6 @@ struct PortfolioView: View {
                 .shadow(color: Color.black.opacity(0.12), radius: 14, x: 0, y: 8)
         )
         .padding(.horizontal, 20)
-    }
-
-    private func saveStrategyOffer(_ offer: Double, for property: Property) {
-        guard let index = propertyStore.properties.firstIndex(where: { $0.id == property.id }) else { return }
-        propertyStore.properties[index].suggestedOfferPrice = offer
-        let updatedProperty = propertyStore.properties[index]
-
-        Task {
-            do {
-                try await propertyStore.updateProperty(updatedProperty)
-            } catch {
-                await MainActor.run {
-                    restoreErrorMessage = "Failed to save strategy: \(error.localizedDescription)"
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        showRestoreErrorToast = true
-                    }
-                }
-            }
-        }
     }
 
     private func triggerDeleteHaptic() {

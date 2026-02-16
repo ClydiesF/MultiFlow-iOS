@@ -82,6 +82,14 @@ struct AddPropertySheet: View {
                     Button("Close") { dismiss() }
                         .foregroundStyle(ink)
                 }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        focusedField = nil
+                    }
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .foregroundStyle(Color.primaryYellow)
+                }
             }
         }
         .onAppear {
@@ -140,7 +148,9 @@ struct AddPropertySheet: View {
                     placeholder: "123 Main St",
                     text: $viewModel.address,
                     keyboard: .default,
-                    field: .address
+                    field: .address,
+                    submitLabel: .next,
+                    onSubmit: { focusedField = .city }
                 )
                 .onChange(of: viewModel.address) { _, newValue in
                     updateAddressAutocompleteQuery(with: newValue)
@@ -203,12 +213,35 @@ struct AddPropertySheet: View {
                             .font(.system(.headline, design: .rounded).weight(.semibold))
                             .foregroundStyle(ink)
                         Spacer()
-                        Text("\(viewModel.downPaymentPercent, specifier: "%.1f")%")
-                            .font(.system(.headline, design: .rounded).weight(.bold))
-                            .foregroundStyle(ink)
+                        HStack(spacing: 8) {
+                            if isPaidOffFinancing {
+                                Text("Paid Off")
+                                    .font(.system(.caption, design: .rounded).weight(.bold))
+                                    .foregroundStyle(Color.primaryYellow)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        Capsule(style: .continuous)
+                                            .fill(buttonBlack)
+                                    )
+                            }
+                            Text("\(viewModel.downPaymentPercent, specifier: "%.1f")%")
+                                .font(.system(.headline, design: .rounded).weight(.bold))
+                                .foregroundStyle(ink)
+                        }
                     }
-                    Slider(value: $viewModel.downPaymentPercent, in: 10...50, step: 0.5)
+                    Slider(value: $viewModel.downPaymentPercent, in: 10...100, step: 0.5)
                         .tint(Color.primaryYellow)
+                        .onChange(of: viewModel.downPaymentPercent) { _, newValue in
+                            if newValue >= 100 {
+                                viewModel.interestRate = "0"
+                                if focusedField == .interestRate {
+                                    focusedField = nil
+                                }
+                            } else if (Double(viewModel.interestRate) ?? 0) <= 0 {
+                                viewModel.interestRate = "6.50"
+                            }
+                        }
 
                     HStack {
                         Text("Down Payment Amount")
@@ -233,7 +266,8 @@ struct AddPropertySheet: View {
                     keyboard: .decimalPad,
                     field: .interestRate,
                     textSize: 30,
-                    suffix: "%"
+                    suffix: "%",
+                    isDisabled: isPaidOffFinancing
                 )
                 .onChange(of: viewModel.interestRate) { _, newValue in
                     viewModel.interestRate = InputFormatters.sanitizeDecimal(newValue)
@@ -249,7 +283,46 @@ struct AddPropertySheet: View {
 
     @ViewBuilder
     private var financingEstimateCard: some View {
-        if let breakdown = wizardMortgageBreakdown {
+        if isPaidOffFinancing, let module = wizardExpenseModule {
+            let monthlyTaxes = module.effectiveAnnualTaxes / 12.0
+            let monthlyInsurance = module.effectiveAnnualInsurance / 12.0
+            let monthlyCarryingTotal = monthlyTaxes + monthlyInsurance
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Estimated Mortgage")
+                    .font(.system(.headline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(ink)
+
+                HStack {
+                    Text("Monthly P&I")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(ink.opacity(0.72))
+                    Spacer()
+                    Text("$0/mo")
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(ink)
+                }
+
+                HStack {
+                    Text("Monthly Taxes + Insurance")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(ink.opacity(0.72))
+                    Spacer()
+                    Text((Formatters.currency.string(from: NSNumber(value: monthlyCarryingTotal)) ?? "$0") + "/mo")
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(ink)
+                }
+
+                Text("Property is fully paid off at 100% down payment. Taxes and insurance still apply.")
+                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(ink.opacity(0.6))
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.cardSurface)
+            )
+        } else if let breakdown = wizardMortgageBreakdown {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Estimated Mortgage")
                     .font(.system(.headline, design: .rounded).weight(.semibold))
@@ -297,7 +370,9 @@ struct AddPropertySheet: View {
                 placeholder: "Dallas",
                 text: $viewModel.city,
                 keyboard: .default,
-                field: .city
+                field: .city,
+                submitLabel: .next,
+                onSubmit: { focusedField = .zip }
             )
             .frame(maxWidth: .infinity)
 
@@ -346,7 +421,9 @@ struct AddPropertySheet: View {
                 placeholder: "75001",
                 text: $viewModel.zipCode,
                 keyboard: .numberPad,
-                field: .zip
+                field: .zip,
+                submitLabel: .done,
+                onSubmit: { focusedField = nil }
             )
             .frame(width: 118)
             .onChange(of: viewModel.zipCode) { _, newValue in
@@ -436,6 +513,12 @@ struct AddPropertySheet: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 18)
         }
+        .scrollDismissesKeyboard(.interactively)
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                dismissKeyboard()
+            }
+        )
     }
 
     private var shouldShowAddressSuggestions: Bool {
@@ -796,7 +879,10 @@ struct AddPropertySheet: View {
         keyboard: UIKeyboardType,
         field: AnalysisWizardField,
         textSize: CGFloat = 18,
-        suffix: String? = nil
+        suffix: String? = nil,
+        submitLabel: SubmitLabel = .done,
+        onSubmit: (() -> Void)? = nil,
+        isDisabled: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
@@ -816,6 +902,11 @@ struct AddPropertySheet: View {
                     .focused($focusedField, equals: field)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .submitLabel(submitLabel)
+                    .disabled(isDisabled)
+                    .onSubmit {
+                        onSubmit?()
+                    }
 
                 if let suffix {
                     Text(suffix)
@@ -837,6 +928,7 @@ struct AddPropertySheet: View {
                     )
             )
         }
+        .opacity(isDisabled ? 0.6 : 1)
         .modifier(ShakeEffect(shakes: missingFields.contains(field) ? CGFloat(shakeTick) : 0))
     }
 
@@ -852,8 +944,7 @@ struct AddPropertySheet: View {
 
     private var liveGrade: Grade {
         guard let metrics = wizardMetrics,
-              let purchase = effectivePurchasePrice,
-              let breakdown = wizardMortgageBreakdown else {
+              let purchase = effectivePurchasePrice else {
             return wizardMetrics?.grade ?? .dOrF
         }
 
@@ -868,7 +959,7 @@ struct AddPropertySheet: View {
                 RentRollEditorView.validUnits(from: rentRollInputs).count,
                 viewModel.resolvedUnitCount ?? 1
             ),
-            annualPrincipalPaydown: breakdown.annualPrincipal,
+            annualPrincipalPaydown: wizardMortgageBreakdown?.annualPrincipal ?? 0,
             appreciationRate: 0,
             cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,
             profile: profile
@@ -877,7 +968,7 @@ struct AddPropertySheet: View {
 
     private var wizardMetrics: DealMetrics? {
         guard let effectivePurchase = effectivePurchasePrice, effectivePurchase > 0 else { return nil }
-        guard let interest = Double(viewModel.interestRate), interest > 0 else { return nil }
+        guard let interest = Double(viewModel.interestRate), interest >= 0 else { return nil }
         guard let module = wizardExpenseModule else { return nil }
         let annualRent = module.grossAnnualRent
         let annualExpenseTotal: Double
@@ -888,14 +979,19 @@ struct AddPropertySheet: View {
             annualExpenseTotal = module.totalOperatingExpenses
         }
 
-        let debtService = MetricsEngine.mortgageBreakdown(
-            purchasePrice: effectivePurchase,
-            downPaymentPercent: viewModel.downPaymentPercent,
-            interestRate: interest,
-            loanTermYears: Double(viewModel.loanTermYears),
-            annualTaxes: module.effectiveAnnualTaxes,
-            annualInsurance: module.effectiveAnnualInsurance
-        ).map { $0.annualPrincipal + $0.annualInterest } ?? 0
+        let debtService: Double
+        if isPaidOffFinancing {
+            debtService = 0
+        } else {
+            debtService = MetricsEngine.mortgageBreakdown(
+                purchasePrice: effectivePurchase,
+                downPaymentPercent: viewModel.downPaymentPercent,
+                interestRate: interest,
+                loanTermYears: Double(viewModel.loanTermYears),
+                annualTaxes: module.effectiveAnnualTaxes,
+                annualInsurance: module.effectiveAnnualInsurance
+            ).map { $0.annualPrincipal + $0.annualInterest } ?? 0
+        }
         let netOperatingIncome = (annualRent * 0.95) - annualExpenseTotal
         let annualCashFlow = netOperatingIncome - debtService
         let downPayment = max(effectivePurchase * (viewModel.downPaymentPercent / 100.0), 0.0001)
@@ -917,6 +1013,7 @@ struct AddPropertySheet: View {
 
     private var wizardMortgageBreakdown: MortgageBreakdown? {
         guard let effectivePurchase = effectivePurchasePrice, effectivePurchase > 0 else { return nil }
+        guard !isPaidOffFinancing else { return nil }
         guard let interest = Double(viewModel.interestRate), interest > 0 else { return nil }
         guard let module = wizardExpenseModule else { return nil }
         return MetricsEngine.mortgageBreakdown(
@@ -1087,12 +1184,18 @@ struct AddPropertySheet: View {
             }
             return
         }
-        guard let interest = Double(viewModel.interestRate), interest > 0 else {
-            errorMessage = "Enter a valid interest rate."
-            withAnimation(.easeInOut(duration: 0.3)) {
-                viewModel.stepIndex = 1
+        let interest: Double
+        if isPaidOffFinancing {
+            interest = 0
+        } else {
+            guard let parsedInterest = Double(viewModel.interestRate), parsedInterest > 0 else {
+                errorMessage = "Enter a valid interest rate."
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    viewModel.stepIndex = 1
+                }
+                return
             }
-            return
+            interest = parsedInterest
         }
         guard let module = wizardExpenseModule else {
             errorMessage = "Complete the inputs to save."
@@ -1258,6 +1361,15 @@ struct AddPropertySheet: View {
         return purchase * (viewModel.downPaymentPercent / 100.0)
     }
 
+    private var isPaidOffFinancing: Bool {
+        viewModel.downPaymentPercent >= 100
+    }
+
+    private func dismissKeyboard() {
+        focusedField = nil
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
     private func buildMissingAnalysisInputs(
         hasRentRoll: Bool,
         hasCapex: Bool,
@@ -1275,6 +1387,8 @@ struct AddPropertySheet: View {
     }
 
     private func selectPropertyType(_ type: PropertyType) {
+        focusedField = nil
+
         withAnimation(.spring(response: 0.26, dampingFraction: 0.72)) {
             viewModel.propertyType = type
         }

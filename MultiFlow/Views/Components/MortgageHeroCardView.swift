@@ -31,6 +31,25 @@ struct MortgageHeroCardView: View {
                         .frame(width: 52, height: 5)
                 }
                 Spacer()
+                Button {
+                    onOpenDetails()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("Lab")
+                            .font(.system(.caption, design: .rounded).weight(.bold))
+                    }
+                    .foregroundStyle(Color.richBlack.opacity(0.68))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.primaryYellow.opacity(0.35))
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open Mortgage Lab")
             }
 
             HStack(spacing: 8) {
