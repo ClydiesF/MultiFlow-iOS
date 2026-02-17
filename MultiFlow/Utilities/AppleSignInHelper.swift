@@ -12,7 +12,9 @@ enum AppleSignInHelper {
             var randomBytes = [UInt8](repeating: 0, count: 16)
             let status = SecRandomCopyBytes(kSecRandomDefault, randomBytes.count, &randomBytes)
             if status != errSecSuccess {
-                fatalError("Unable to generate nonce. SecRandomCopyBytes failed.")
+                // Avoid user-facing crashes if secure random generation fails.
+                let fallback = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+                return String(fallback.prefix(length))
             }
 
             randomBytes.forEach { byte in

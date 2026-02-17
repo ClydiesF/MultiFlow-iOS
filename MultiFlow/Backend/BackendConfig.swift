@@ -31,12 +31,8 @@ struct BackendConfig {
             return BackendConfig(supabaseURL: url, supabaseAnonKey: anonKey)
         }
 
-#if DEBUG
-        fatalError("Missing Supabase config. Set SUPABASE_URL and SUPABASE_ANON_KEY in build settings / Info.plist.")
-#else
         let fallbackURL = URL(string: fallbackSupabaseURLString)!
-        assertionFailure("Missing Supabase config in bundled Info.plist. Falling back to embedded defaults for release runtime safety.")
+        assertionFailure("Missing Supabase config. Falling back to embedded defaults.")
         return BackendConfig(supabaseURL: fallbackURL, supabaseAnonKey: fallbackSupabaseAnonKey)
-#endif
     }
 }
