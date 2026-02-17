@@ -1,6 +1,9 @@
 import Foundation
 
 struct BackendConfig {
+    private static let fallbackSupabaseURLString = "https://rmszsjyvjhtdmgvbliya.supabase.co"
+    private static let fallbackSupabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJtc3pzanl2amh0ZG1ndmJsaXlhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA1MTk2ODUsImV4cCI6MjA4NjA5NTY4NX0.5Nr1hDoeh1yS49MFr71Qt123dOsOKzbsig0q24IvZ24"
+
     let supabaseURL: URL
     let supabaseAnonKey: String
 
@@ -24,10 +27,16 @@ struct BackendConfig {
             ?? ""
         ).trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard let url = URL(string: urlString), !anonKey.isEmpty else {
-            fatalError("Missing Supabase config. Set SUPABASE_URL and SUPABASE_ANON_KEY in build settings / Info.plist.")
+        if let url = URL(string: urlString), !anonKey.isEmpty {
+            return BackendConfig(supabaseURL: url, supabaseAnonKey: anonKey)
         }
 
-        return BackendConfig(supabaseURL: url, supabaseAnonKey: anonKey)
+#if DEBUG
+        fatalError("Missing Supabase config. Set SUPABASE_URL and SUPABASE_ANON_KEY in build settings / Info.plist.")
+#else
+        let fallbackURL = URL(string: fallbackSupabaseURLString)!
+        assertionFailure("Missing Supabase config in bundled Info.plist. Falling back to embedded defaults for release runtime safety.")
+        return BackendConfig(supabaseURL: fallbackURL, supabaseAnonKey: fallbackSupabaseAnonKey)
+#endif
     }
 }
