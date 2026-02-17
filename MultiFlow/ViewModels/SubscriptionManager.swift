@@ -2,6 +2,136 @@ import Foundation
 import Combine
 import RevenueCat
 
+struct RentCastUsageSnapshot: Codable, Equatable, Sendable {
+    let monthKey: String
+    var usedCredits: Int
+    var quotaCredits: Int
+    var endpointCounts: [String: Int]
+
+    var remainingCredits: Int {
+        max(quotaCredits - usedCredits, 0)
+    }
+
+    var usageRatio: Double {
+        guard quotaCredits > 0 else { return 1 }
+        return min(Double(usedCredits) / Double(quotaCredits), 1)
+    }
+}
+
+@MainActor
+final class RentCastUsageManager: ObservableObject {
+    enum Endpoint: String, CaseIterable, Sendable {
+        case markets
+        case rentAVM
+        case valueAVM
+        case properties
+
+        var creditCost: Int {
+            switch self {
+            case .markets, .rentAVM, .valueAVM:
+                return 1
+            case .properties:
+                return 2
+            }
+        }
+    }
+
+    enum UsageError: LocalizedError {
+        case quotaExceeded(remaining: Int)
+
+        var errorDescription: String? {
+            switch self {
+            case .quotaExceeded(let remaining):
+                return remaining <= 0
+                    ? "Monthly market data quota reached. Upgrade plan or wait for next month."
+                    : "Not enough monthly credits for this action."
+            }
+        }
+    }
+
+    static let shared = RentCastUsageManager()
+
+    @Published private(set) var snapshot: RentCastUsageSnapshot
+
+    private let storageKey = "rentcast_usage_v1"
+    private let defaultQuotaCredits = 25
+    private var reservations: [UUID: (cost: Int, endpoint: Endpoint)] = [:]
+
+    private init() {
+        let month = Self.currentMonthKey()
+        if let data = UserDefaults.standard.data(forKey: storageKey),
+           let decoded = try? JSONDecoder().decode(RentCastUsageSnapshot.self, from: data),
+           decoded.monthKey == month {
+            snapshot = decoded
+        } else {
+            snapshot = RentCastUsageSnapshot(
+                monthKey: month,
+                usedCredits: 0,
+                quotaCredits: defaultQuotaCredits,
+                endpointCounts: [:]
+            )
+            persist()
+        }
+    }
+
+    func ensureCurrentMonth() {
+        let month = Self.currentMonthKey()
+        guard snapshot.monthKey != month else { return }
+        snapshot = RentCastUsageSnapshot(
+            monthKey: month,
+            usedCredits: 0,
+            quotaCredits: defaultQuotaCredits,
+            endpointCounts: [:]
+        )
+        reservations.removeAll()
+        persist()
+    }
+
+    func reserve(_ endpoint: Endpoint) throws -> UUID {
+        ensureCurrentMonth()
+        let pendingCost = reservations.values.reduce(0) { $0 + $1.cost }
+        let available = max(snapshot.quotaCredits - snapshot.usedCredits - pendingCost, 0)
+        guard available >= endpoint.creditCost else {
+            throw UsageError.quotaExceeded(remaining: max(snapshot.remainingCredits - pendingCost, 0))
+        }
+        let token = UUID()
+        reservations[token] = (endpoint.creditCost, endpoint)
+        return token
+    }
+
+    func commit(_ token: UUID) {
+        ensureCurrentMonth()
+        guard let reservation = reservations.removeValue(forKey: token) else { return }
+        snapshot.usedCredits += reservation.cost
+        snapshot.endpointCounts[reservation.endpoint.rawValue, default: 0] += 1
+        persist()
+    }
+
+    func syncFromServer(usedCredits: Int, quotaCredits: Int) {
+        ensureCurrentMonth()
+        snapshot.usedCredits = max(usedCredits, 0)
+        snapshot.quotaCredits = max(quotaCredits, 0)
+        persist()
+    }
+
+    func cancel(_ token: UUID) {
+        _ = reservations.removeValue(forKey: token)
+    }
+
+    private func persist() {
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        UserDefaults.standard.set(data, forKey: storageKey)
+    }
+
+    private static func currentMonthKey() -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM"
+        return formatter.string(from: Date())
+    }
+}
+
 @MainActor
 final class SubscriptionManager: NSObject, ObservableObject, PurchasesDelegate {
     enum BillingPlan: String, CaseIterable, Identifiable {

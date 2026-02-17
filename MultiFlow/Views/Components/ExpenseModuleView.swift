@@ -9,6 +9,7 @@ enum ExpenseInputMode: String, CaseIterable, Identifiable {
 }
 
 struct ExpenseModuleView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let module: MFMetricEngine.ExpenseModule?
     let annualCashFlow: Double?
     @Binding var mode: ExpenseInputMode
@@ -164,10 +165,10 @@ struct ExpenseModuleView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
                     .font(.system(.subheadline, design: .rounded).weight(.bold))
-                    .foregroundStyle(mode == tileMode ? Color.primaryYellow : .white)
+                    .foregroundStyle(mode == tileMode ? Color.primaryYellow : unselectedTileTitleColor)
                 Text(body)
                     .font(.system(.caption2, design: .rounded).weight(.semibold))
-                    .foregroundStyle(mode == tileMode ? Color.primaryYellow.opacity(0.9) : Color.white.opacity(0.8))
+                    .foregroundStyle(mode == tileMode ? Color.primaryYellow.opacity(0.9) : unselectedTileBodyColor)
                     .multilineTextAlignment(.leading)
                     .lineLimit(2)
             }
@@ -182,13 +183,21 @@ struct ExpenseModuleView: View {
                     .stroke(
                         mode == tileMode
                         ? Color.primaryYellow.opacity(0.55)
-                        : Color.black.opacity(0.08),
+                        : Color.richBlack.opacity(colorScheme == .dark ? 0.26 : 0.12),
                         lineWidth: 1
                     )
             )
             .scaleEffect(mode == tileMode ? 1.0 : 0.985)
         }
         .buttonStyle(.plain)
+    }
+
+    private var unselectedTileTitleColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.9) : Color.richBlack.opacity(0.88)
+    }
+
+    private var unselectedTileBodyColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.72) : Color.richBlack.opacity(0.66)
     }
 
     private func moduleField(

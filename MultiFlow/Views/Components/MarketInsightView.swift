@@ -28,9 +28,14 @@ struct MarketInsightView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
                         insightCard(
-                            title: "Rent Growth",
-                            value: snapshot?.formattedRentGrowth ?? "—",
-                            valueColor: ((snapshot?.rentGrowthYoYPercent ?? 0) >= 0) ? Color.primaryYellow : Color.red.opacity(0.85)
+                            title: "Median Zip Rent",
+                            value: snapshot?.formattedMedianRent ?? "—",
+                            valueColor: Color.primaryYellow
+                        )
+                        insightCard(
+                            title: "Avg. Zip Rent",
+                            value: snapshot?.formattedAverageRent ?? "—",
+                            valueColor: Color.richBlack
                         )
                         insightCard(
                             title: "Days on Market",
@@ -38,7 +43,12 @@ struct MarketInsightView: View {
                             valueColor: Color.richBlack
                         )
                         insightCard(
-                            title: "Inventory Level",
+                            title: "Listings",
+                            value: snapshot?.formattedListingsActivity ?? "—",
+                            valueColor: Color.richBlack
+                        )
+                        insightCard(
+                            title: "Inventory",
                             value: snapshot?.inventoryLevel ?? "—",
                             valueColor: Color.richBlack
                         )
@@ -117,7 +127,15 @@ struct MarketInsightView: View {
 
 #Preview {
     MarketInsightView(
-        snapshot: MarketInsightSnapshot(rentGrowthYoYPercent: 5.2, daysOnMarket: 18, inventoryLevel: "Tight"),
+        snapshot: MarketInsightSnapshot(
+            medianRent: 1500,
+            averageRent: 1575,
+            rentGrowthYoYPercent: 5.2,
+            daysOnMarket: 18,
+            newListings: 23,
+            totalListings: 55,
+            inventoryLevel: "Tight"
+        ),
         isPremiumUnlocked: false,
         isLoading: false,
         onUnlock: {}

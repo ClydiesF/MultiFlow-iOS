@@ -97,13 +97,26 @@ struct RentalMarketScaleView: View {
                 .foregroundStyle(Color.richBlack)
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                Text("Current \(Formatters.currency.string(from: NSNumber(value: currentRent)) ?? "$0")")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.richBlack.opacity(0.72))
-                Text("+\(Formatters.currency.string(from: NSNumber(value: upside)) ?? "$0")/mo")
-                    .font(.system(size: 12, weight: .heavy, design: .rounded))
-                    .foregroundStyle(Color.primaryYellow)
-                    .opacity(isRevealed ? 1 : 0.55)
+                if isPremiumUnlocked {
+                    Text("Current \(Formatters.currency.string(from: NSNumber(value: currentRent)) ?? "$0")")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.72))
+                    Text("+\(Formatters.currency.string(from: NSNumber(value: upside)) ?? "$0")/mo")
+                        .font(.system(size: 12, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Color.primaryYellow)
+                        .opacity(isRevealed ? 1 : 0.55)
+                } else {
+                    Text("Current —")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.55))
+                        .redacted(reason: .placeholder)
+                        .blur(radius: 1.8)
+                    Text("Upside locked")
+                        .font(.system(size: 12, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.48))
+                        .redacted(reason: .placeholder)
+                        .blur(radius: 1.8)
+                }
             }
         }
     }

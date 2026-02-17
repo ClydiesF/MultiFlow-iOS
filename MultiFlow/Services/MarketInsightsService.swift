@@ -1,20 +1,46 @@
 import Foundation
+import Supabase
+import Auth
 
 struct MarketInsightsService {
+    struct RentalMarketAVMSnapshot: Codable, Sendable {
+        struct Comparable: Codable, Sendable {
+            let address: String
+            let monthlyRent: Double
+            let distanceMiles: Double
+        }
+
+        let rent: Double
+        let rentRangeLow: Double
+        let rentRangeHigh: Double
+        let comparables: [Comparable]
+    }
+
     private struct CachedInsightEntry: Codable, Sendable {
         let snapshot: MarketInsightSnapshot
+        let fetchedAt: Date
+    }
+
+    private struct CachedRentAVMEntry: Codable, Sendable {
+        let snapshot: RentalMarketAVMSnapshot
         let fetchedAt: Date
     }
 
     private actor MarketInsightsCacheStore {
         static let shared = MarketInsightsCacheStore()
         private let storageKey = "market_insights_cache_v1"
+        private let rentAVMStorageKey = "market_rent_avm_cache_v1"
         private var cache: [String: CachedInsightEntry] = [:]
+        private var rentAVMCache: [String: CachedRentAVMEntry] = [:]
 
         init() {
             if let data = UserDefaults.standard.data(forKey: storageKey),
                let decoded = try? JSONDecoder().decode([String: CachedInsightEntry].self, from: data) {
                 cache = decoded
+            }
+            if let data = UserDefaults.standard.data(forKey: rentAVMStorageKey),
+               let decoded = try? JSONDecoder().decode([String: CachedRentAVMEntry].self, from: data) {
+                rentAVMCache = decoded
             }
         }
 
@@ -33,9 +59,20 @@ struct MarketInsightsService {
             persist()
         }
 
+        func rentAVMValue(for key: String) -> RentalMarketAVMSnapshot? {
+            rentAVMCache[key]?.snapshot
+        }
+
+        func saveRentAVM(_ snapshot: RentalMarketAVMSnapshot, for key: String) {
+            rentAVMCache[key] = CachedRentAVMEntry(snapshot: snapshot, fetchedAt: Date())
+            persist()
+        }
+
         private func persist() {
             guard let data = try? JSONEncoder().encode(cache) else { return }
             UserDefaults.standard.set(data, forKey: storageKey)
+            guard let rentData = try? JSONEncoder().encode(rentAVMCache) else { return }
+            UserDefaults.standard.set(rentData, forKey: rentAVMStorageKey)
         }
     }
 
@@ -66,35 +103,20 @@ struct MarketInsightsService {
             return cached
         }
 
-        let apiKey = (Bundle.main.object(forInfoDictionaryKey: "RENTCAST_API_KEY") as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !apiKey.isEmpty else {
-            throw InsightError.missingAPIKey
-        }
-
-        var components = URLComponents(url: baseURL.appendingPathComponent("markets"), resolvingAgainstBaseURL: false)
-        components?.queryItems = [
-            URLQueryItem(name: "zipCode", value: zipCode),
-            URLQueryItem(name: "dataType", value: "rental")
-        ].filter { ($0.value ?? "").isEmpty == false }
-
-        guard let url = components?.url else {
-            throw InsightError.invalidResponse
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
-        request.timeoutInterval = 15
-
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200..<300).contains(httpResponse.statusCode) else {
-                throw InsightError.invalidResponse
+            let response = try await invokeRentcastProxy(endpoint: "markets", params: [
+                "zipCode": zipCode
+            ])
+            let payload = response["data"] ?? response
+            let serialized = try JSONSerialization.data(withJSONObject: payload)
+            let snapshot = try parseMarketSnapshot(from: serialized)
+            if let credits = response["credits"] as? [String: Any],
+               let used = credits["used"] as? Int,
+               let quota = credits["quota"] as? Int {
+                await MainActor.run {
+                    RentCastUsageManager.shared.syncFromServer(usedCredits: used, quotaCredits: quota)
+                }
             }
-
-            let snapshot = try parseMarketSnapshot(from: data)
             await cacheStore.save(snapshot, for: cacheKey)
             return snapshot
         } catch {
@@ -122,6 +144,103 @@ struct MarketInsightsService {
         }
         if stateKey == "FL" { return 1950 }
         return 1650
+    }
+
+    func fetchLongTermRentAVM(fullAddress: String) async throws -> RentalMarketAVMSnapshot {
+        let normalizedAddress = fullAddress
+            .replacingOccurrences(of: "\\s*,\\s*", with: ", ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedAddress.isEmpty else {
+            throw InsightError.invalidResponse
+        }
+
+        let cacheKey = "rent_avm::\(normalizedAddress.lowercased())"
+        if let cached = await cacheStore.rentAVMValue(for: cacheKey) {
+            return cached
+        }
+
+        do {
+            let response = try await invokeRentcastProxy(endpoint: "avm_rent", params: [
+                "address": normalizedAddress
+            ])
+            let object = (response["data"] as? [String: Any]) ?? response
+            if object.isEmpty {
+                throw InsightError.invalidResponse
+            }
+
+            let rent = findDouble(in: object, keys: ["rent", "price", "estimate", "value"]) ?? 0
+            let rangeLow = findDouble(in: object, keys: ["rentRangeLow", "priceRangeLow", "rangeLow"]) ?? (rent * 0.9)
+            let rangeHigh = findDouble(in: object, keys: ["rentRangeHigh", "priceRangeHigh", "rangeHigh"]) ?? (rent * 1.1)
+
+            let rawComps = (object["comparables"] as? [[String: Any]]) ?? []
+            let comps: [RentalMarketAVMSnapshot.Comparable] = rawComps.prefix(8).compactMap { comp in
+                let address = findString(in: comp, keys: ["formattedAddress", "addressLine1", "address"]) ?? "Comparable"
+                let monthlyRent = findDouble(in: comp, keys: ["rent", "price", "estimate", "value"]) ?? 0
+                let distance = findDouble(in: comp, keys: ["distance", "distanceMiles"]) ?? 0
+                guard monthlyRent > 0 else { return nil }
+                return .init(address: address, monthlyRent: monthlyRent, distanceMiles: distance)
+            }
+
+            let snapshot = RentalMarketAVMSnapshot(
+                rent: max(rent, 0),
+                rentRangeLow: max(rangeLow, 0),
+                rentRangeHigh: max(rangeHigh, 0),
+                comparables: comps
+            )
+            if let credits = response["credits"] as? [String: Any],
+               let used = credits["used"] as? Int,
+               let quota = credits["quota"] as? Int {
+                await MainActor.run {
+                    RentCastUsageManager.shared.syncFromServer(usedCredits: used, quotaCredits: quota)
+                }
+            }
+            await MainActor.run {
+                RentCastUsageManager.shared.ensureCurrentMonth()
+            }
+            await cacheStore.saveRentAVM(snapshot, for: cacheKey)
+            return snapshot
+        } catch {
+            throw error
+        }
+    }
+
+    private func invokeRentcastProxy(endpoint: String, params: [String: String]) async throws -> [String: Any] {
+        let config = BackendConfig.load()
+        guard let token = SupabaseManager.shared.client.auth.currentSession?.accessToken else {
+            throw InsightError.invalidResponse
+        }
+
+        let url = config.supabaseURL.appendingPathComponent("functions/v1/rentcast-proxy")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "endpoint": endpoint,
+            "params": params
+        ])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw InsightError.invalidResponse
+        }
+
+        let json = try JSONSerialization.jsonObject(with: data)
+        let object = json as? [String: Any] ?? [:]
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            if let message = object["error"] as? String, !message.isEmpty {
+                throw NSError(domain: "RentcastProxy", code: httpResponse.statusCode, userInfo: [
+                    NSLocalizedDescriptionKey: message
+                ])
+            }
+            throw InsightError.invalidResponse
+        }
+
+        return object
     }
 
     func estimatedTaxRate(state: String?) async -> Double? {
@@ -166,10 +285,8 @@ struct MarketInsightsService {
     private func snapshotFrom(dictionary: [String: Any]) -> MarketInsightSnapshot? {
         let rentalData = (dictionary["rentalData"] as? [String: Any]) ?? dictionary
 
-        let currentRent = findDouble(
-            in: rentalData,
-            keys: ["medianRent", "averageRent", "avgRent", "rent"]
-        )
+        let medianRent = findDouble(in: rentalData, keys: ["medianRent", "rentMedian"]) ?? 0
+        let averageRent = findDouble(in: rentalData, keys: ["averageRent", "avgRent", "rentAverage"]) ?? medianRent
         let currentDom = findInt(
             in: rentalData,
             keys: [
@@ -184,6 +301,8 @@ struct MarketInsightsService {
             in: rentalData,
             keys: ["totalListings", "activeListings", "inventory", "inventoryCount", "newListings"]
         )
+        let totalListings = findInt(in: rentalData, keys: ["totalListings", "activeListings", "inventory", "inventoryCount"]) ?? 0
+        let newListings = findInt(in: rentalData, keys: ["newListings"]) ?? 0
         let explicitInventoryLevel = findString(
             in: rentalData,
             keys: ["inventoryLevel", "inventoryStatus", "inventory_level", "inventory_status"]
@@ -200,7 +319,7 @@ struct MarketInsightsService {
             ) {
                 return directGrowth
             }
-            guard let latestRent = latestPoint?.rent ?? currentRent,
+            guard let latestRent = latestPoint?.rent ?? (medianRent > 0 ? medianRent : nil),
                   let baselineRent = baselinePoint?.rent,
                   baselineRent > 0 else {
                 return 0
@@ -214,19 +333,27 @@ struct MarketInsightsService {
             if let explicitInventoryLevel {
                 return normalizeInventoryLevel(from: explicitInventoryLevel)
             }
-            let inventoryValue = latestPoint?.inventory ?? currentInventory
-            if let inventoryValue {
-                return inventoryValue <= 50 ? "Tight" : "Leased"
+            let inventoryValue = latestPoint?.inventory ?? currentInventory ?? Double(totalListings)
+            if inventoryValue > 0 {
+                let newListingsValue = max(1, newListings)
+                let turnoverRatio = Double(newListingsValue) / inventoryValue
+                if turnoverRatio >= 0.33 { return "Tight" }
+                if turnoverRatio <= 0.12 { return "Leased" }
+                return "Balanced"
             }
             return "Tight"
         }()
 
-        let hasUsableSignal = (currentRent != nil) || (currentDom != nil) || !history.isEmpty || (currentInventory != nil)
+        let hasUsableSignal = (medianRent > 0 || averageRent > 0) || (currentDom != nil) || !history.isEmpty || (currentInventory != nil)
         guard hasUsableSignal else { return nil }
 
         return MarketInsightSnapshot(
+            medianRent: medianRent > 0 ? medianRent : averageRent,
+            averageRent: averageRent > 0 ? averageRent : medianRent,
             rentGrowthYoYPercent: rentGrowthYoY,
             daysOnMarket: daysOnMarket,
+            newListings: newListings,
+            totalListings: totalListings,
             inventoryLevel: inventoryLevel
         )
     }
@@ -239,22 +366,38 @@ struct MarketInsightsService {
     }
 
     private func extractHistoryPoints(from object: [String: Any]) -> [HistoryPoint] {
-        guard let historyArray = object["history"] as? [[String: Any]] else { return [] }
-
-        return historyArray.map { item in
-            let rent = findDouble(in: item, keys: ["medianRent", "averageRent", "avgRent", "rent"])
-            let dom = findInt(
-                in: item,
-                keys: ["medianDaysOnMarket", "averageDaysOnMarket", "avgDaysOnMarket", "daysOnMarket", "dom"]
-            )
-            let inventory = findDouble(in: item, keys: ["totalListings", "activeListings", "inventory", "newListings"])
-            let date = parseHistoryDate(from: item)
-            return HistoryPoint(date: date, rent: rent, daysOnMarket: dom, inventory: inventory)
+        if let historyArray = object["history"] as? [[String: Any]] {
+            return historyArray.map { item in
+                let rent = findDouble(in: item, keys: ["medianRent", "averageRent", "avgRent", "rent"])
+                let dom = findInt(
+                    in: item,
+                    keys: ["medianDaysOnMarket", "averageDaysOnMarket", "avgDaysOnMarket", "daysOnMarket", "dom"]
+                )
+                let inventory = findDouble(in: item, keys: ["totalListings", "activeListings", "inventory", "newListings"])
+                let date = parseHistoryDate(from: item, fallbackKey: nil)
+                return HistoryPoint(date: date, rent: rent, daysOnMarket: dom, inventory: inventory)
+            }
         }
+
+        if let historyDictionary = object["history"] as? [String: Any] {
+            return historyDictionary.compactMap { key, rawValue in
+                guard let item = rawValue as? [String: Any] else { return nil }
+                let rent = findDouble(in: item, keys: ["medianRent", "averageRent", "avgRent", "rent"])
+                let dom = findInt(
+                    in: item,
+                    keys: ["medianDaysOnMarket", "averageDaysOnMarket", "avgDaysOnMarket", "daysOnMarket", "dom"]
+                )
+                let inventory = findDouble(in: item, keys: ["totalListings", "activeListings", "inventory", "newListings"])
+                let date = parseHistoryDate(from: item, fallbackKey: key)
+                return HistoryPoint(date: date, rent: rent, daysOnMarket: dom, inventory: inventory)
+            }
+        }
+
+        return []
     }
 
-    private func parseHistoryDate(from object: [String: Any]) -> Date? {
-        let raw = findString(in: object, keys: ["date", "month", "period", "timestamp"])
+    private func parseHistoryDate(from object: [String: Any], fallbackKey: String?) -> Date? {
+        let raw = findString(in: object, keys: ["date", "month", "period", "timestamp"]) ?? fallbackKey
         guard let raw else { return nil }
 
         let isoDate = ISO8601DateFormatter()
@@ -284,14 +427,17 @@ struct MarketInsightsService {
     }
 
     private func baselineHistoryPoint(for latest: HistoryPoint?, history: [HistoryPoint]) -> HistoryPoint? {
-        guard let latestDate = latest?.date else { return nil }
+        guard let latestDate = latest?.date else { return history.min(by: { ($0.date ?? .distantFuture) < ($1.date ?? .distantFuture) }) }
         let calendar = Calendar(identifier: .gregorian)
         let candidates = history.compactMap { point -> (HistoryPoint, Int)? in
             guard let date = point.date else { return nil }
             let monthDiff = abs((calendar.dateComponents([.month], from: date, to: latestDate).month ?? 0))
             return (point, monthDiff)
         }
-        return candidates.min(by: { abs($0.1 - 12) < abs($1.1 - 12) })?.0
+        if let aroundOneYear = candidates.min(by: { abs($0.1 - 12) < abs($1.1 - 12) })?.0 {
+            return aroundOneYear
+        }
+        return history.min(by: { ($0.date ?? .distantFuture) < ($1.date ?? .distantFuture) })
     }
 
     private func findDouble(in object: [String: Any], keys: [String]) -> Double? {
@@ -367,12 +513,6 @@ struct MarketInsightsService {
 
     private func buildCacheKey(zipCode: String, city: String?, state: String?) -> String {
         let normalizedZip = zipCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedCity = (city ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        let normalizedState = (state ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .uppercased()
-        return "\(normalizedZip)|\(normalizedCity)|\(normalizedState)"
+        return normalizedZip
     }
 }

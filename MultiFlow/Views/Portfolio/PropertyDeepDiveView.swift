@@ -1,6 +1,8 @@
 import SwiftUI
 import Charts
 import UIKit
+import Supabase
+import Auth
 
 struct PropertyDeepDiveView: View {
     @EnvironmentObject var subscriptionManager: SubscriptionManager
@@ -11,6 +13,8 @@ struct PropertyDeepDiveView: View {
     @State private var scanStatusText: String = "Connecting to County Records..."
     @State private var showPaywall = false
     @State private var scanData: IntelligenceScanData?
+    @State private var scanError: String?
+    @State private var scanWarning: String?
     @State private var selectedComparable: ValuationScaleView.ComparableSnapshot?
 
     private let statusSteps = [
@@ -19,6 +23,7 @@ struct PropertyDeepDiveView: View {
         "Verifying Ownership..."
     ]
     private let offWhite = Color(white: 0.95)
+    private let recordsService = PropertyRecordsService()
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -73,6 +78,9 @@ struct PropertyDeepDiveView: View {
         .sheet(item: $selectedComparable) { comparable in
             ComparableDetailSheet(comparable: comparable)
                 .presentationDetents([.height(300), .medium])
+        }
+        .task(id: fullAddress) {
+            await loadCachedScanIfAvailable()
         }
     }
 
@@ -136,6 +144,18 @@ struct PropertyDeepDiveView: View {
                     }
                     .transition(.opacity.combined(with: .scale))
                 }
+
+                if let scanWarning {
+                    Text(scanWarning)
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.primaryYellow.opacity(0.9))
+                }
+
+                if let scanError {
+                    Text(scanError)
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .foregroundStyle(.red.opacity(0.9))
+                }
             }
         }
     }
@@ -162,19 +182,20 @@ struct PropertyDeepDiveView: View {
                 skeletonTaxChart
             } else if let data = scanData {
                 VStack(alignment: .leading, spacing: 14) {
-                    Chart(Array(data.taxHistory.enumerated()), id: \.element.year) { index, point in
-                        let prior = index > 0 ? data.taxHistory[index - 1].taxAmount : nil
-                        let isJump = isTaxJumpOverTenPercent(current: point.taxAmount, previous: prior)
+                    let sortedTaxHistory = data.taxHistory.sorted(by: { $0.year < $1.year })
+
+                    Chart(sortedTaxHistory, id: \.year) { point in
                         BarMark(
-                            x: .value("Assessment Year", point.year),
-                            y: .value("Tax", point.taxAmount)
+                            x: .value("Assessment Year", String(point.year)),
+                            y: .value("Assessed Value", point.assessedValue),
+                            width: .fixed(8)
                         )
-                        .foregroundStyle(isJump ? Color.red.opacity(0.92) : Color.primaryYellow)
+                        .foregroundStyle(Color.primaryYellow)
                         .cornerRadius(4)
                     }
                     .frame(height: 180)
                     .chartXAxis {
-                        AxisMarks(values: .automatic(desiredCount: 5)) {
+                        AxisMarks {
                             AxisValueLabel()
                                 .foregroundStyle(Color.white.opacity(0.72))
                         }
@@ -395,6 +416,8 @@ struct PropertyDeepDiveView: View {
         scanState = .scanning
         scanProgress = 0
         scanStatusText = statusSteps[0]
+        scanError = nil
+        scanWarning = nil
 
         let duration: Double = 1.8
         let tick: Double = 0.03
@@ -414,13 +437,59 @@ struct PropertyDeepDiveView: View {
 
             try? await Task.sleep(nanoseconds: UInt64(tick * 1_000_000_000))
         }
-
-        scanData = buildMockScanData()
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
-
-        withAnimation(.spring(response: 0.55, dampingFraction: 0.78, blendDuration: 0)) {
-            scanState = .loaded
+        do {
+            let result = try await recordsService.fetchPropertyRecordData(for: property, fullAddress: fullAddress)
+            scanData = result.data
+            scanWarning = result.warning
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.78, blendDuration: 0)) {
+                scanState = .loaded
+            }
+        } catch {
+            scanData = buildMockScanData()
+            scanError = userFriendlyScanError(error)
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.78, blendDuration: 0)) {
+                scanState = .loaded
+            }
         }
+    }
+
+    @MainActor
+    private func loadCachedScanIfAvailable() async {
+        guard !fullAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard let cached = await recordsService.cachedPropertyRecordData(fullAddress: fullAddress) else { return }
+
+        scanData = cached
+        scanWarning = nil
+        scanError = nil
+        scanProgress = 1
+        scanStatusText = "Scan loaded from cache"
+        scanState = .loaded
+    }
+
+    private var fullAddress: String {
+        [
+            property.address.trimmingCharacters(in: .whitespacesAndNewlines),
+            property.city?.trimmingCharacters(in: .whitespacesAndNewlines),
+            property.state?.trimmingCharacters(in: .whitespacesAndNewlines),
+            property.zipCode?.trimmingCharacters(in: .whitespacesAndNewlines)
+        ]
+        .compactMap { value in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        .joined(separator: ", ")
+    }
+
+    private func userFriendlyScanError(_ error: Error) -> String {
+        let message = error.localizedDescription.lowercased()
+        if message.contains("quota") || message.contains("credits") || message.contains("remaining credits") {
+            return "Monthly intelligence credits reached. Upgrade or wait until next month to run another scan."
+        }
+        if message.contains("unauthorized") || message.contains("invalid auth") {
+            return "Please sign in again to run Intelligence Scan."
+        }
+        return error.localizedDescription
     }
 
     private func buildMockScanData() -> IntelligenceScanData {
@@ -521,13 +590,557 @@ struct PropertyDeepDiveView: View {
     }
 }
 
+private struct PropertyRecordsService {
+    private struct CachedRecordEntry: Codable, Sendable {
+        let data: IntelligenceScanData
+        let fetchedAt: Date
+    }
+
+    private actor PropertyRecordCacheStore {
+        static let shared = PropertyRecordCacheStore()
+        private let storageKey = "property_deep_dive_records_cache_v2"
+        private var cache: [String: CachedRecordEntry] = [:]
+
+        init() {
+            if let data = UserDefaults.standard.data(forKey: storageKey),
+               let decoded = try? JSONDecoder().decode([String: CachedRecordEntry].self, from: data) {
+                cache = decoded
+            }
+        }
+
+        func cachedValue(for key: String) -> IntelligenceScanData? {
+            cache[key]?.data
+        }
+
+        func save(_ data: IntelligenceScanData, for key: String) {
+            cache[key] = CachedRecordEntry(data: data, fetchedAt: Date())
+            persist()
+        }
+
+        private func persist() {
+            guard let data = try? JSONEncoder().encode(cache) else { return }
+            UserDefaults.standard.set(data, forKey: storageKey)
+        }
+    }
+
+    enum PropertyRecordsError: LocalizedError {
+        case missingAPIKey
+        case missingAddress
+        case invalidResponse
+        case emptyResponse
+        case apiError(status: Int, message: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .missingAPIKey: return "Missing RentCast API key."
+            case .missingAddress: return "A full address is required for property records."
+            case .invalidResponse: return "Unable to read property records response."
+            case .emptyResponse: return "No property record returned for this address."
+            case .apiError(let status, let message):
+                return "RentCast API error (\(status)): \(message)"
+            }
+        }
+    }
+
+    private let propertyRecordsURL = URL(string: "https://api.rentcast.io/v1/properties")!
+    private let avmValueURL = URL(string: "https://api.rentcast.io/v1/avm/value")!
+    private let cacheStore = PropertyRecordCacheStore.shared
+
+    func fetchPropertyRecordData(for property: Property, fullAddress: String) async throws -> (data: IntelligenceScanData, warning: String?) {
+        let trimmedAddress = normalizedAddress(fullAddress)
+        guard !trimmedAddress.isEmpty else { throw PropertyRecordsError.missingAddress }
+
+        let cacheKey = cacheKey(for: trimmedAddress)
+        if let cached = await cacheStore.cachedValue(for: cacheKey) {
+            print("PropertyDeepDive cache hit for address: \(trimmedAddress)")
+            return (data: cached, warning: nil)
+        }
+
+        async let recordsTask = fetchPropertyRecords(address: trimmedAddress, fallbackProperty: property)
+        async let avmTask: Result<(estimate: Double, rangeMin: Double, rangeMax: Double, comparables: [ValuationScaleView.ComparableSnapshot]), Error> = {
+            do {
+                return .success(try await fetchAVMValue(address: trimmedAddress))
+            } catch {
+                return .failure(error)
+            }
+        }()
+
+        var records = try await recordsTask
+        var warning: String?
+        switch await avmTask {
+        case .success(let avm):
+            records.valuationEstimate = avm.estimate
+            records.valuationRangeMin = avm.rangeMin
+            records.valuationRangeMax = avm.rangeMax
+            if !avm.comparables.isEmpty {
+                records.comparables = avm.comparables
+            }
+        case .failure(let error):
+            let raw = error.localizedDescription.lowercased()
+            if raw.contains("quota") || raw.contains("credits") || raw.contains("remaining credits") {
+                warning = "Valuation unavailable: monthly credits reached."
+            } else {
+                warning = "Valuation unavailable: \(error.localizedDescription)"
+            }
+            print("PropertyDeepDive AVM fetch failed for \(trimmedAddress): \(error.localizedDescription)")
+        }
+
+        await cacheStore.save(records, for: cacheKey)
+        return (data: records, warning: warning)
+    }
+
+    func cachedPropertyRecordData(fullAddress: String) async -> IntelligenceScanData? {
+        let trimmedAddress = normalizedAddress(fullAddress)
+        guard !trimmedAddress.isEmpty else { return nil }
+        let key = cacheKey(for: trimmedAddress)
+        return await cacheStore.cachedValue(for: key)
+    }
+
+    private func fetchPropertyRecords(address: String, fallbackProperty: Property) async throws -> IntelligenceScanData {
+        print("PropertyDeepDive /properties request address=\(address)")
+
+        do {
+            let response = try await invokeRentcastProxy(endpoint: "properties", params: ["address": address])
+            if let credits = response["credits"] as? [String: Any],
+               let used = credits["used"] as? Int,
+               let quota = credits["quota"] as? Int {
+                await MainActor.run {
+                    RentCastUsageManager.shared.syncFromServer(usedCredits: used, quotaCredits: quota)
+                }
+            }
+            guard let payload = response["data"] else { throw PropertyRecordsError.invalidResponse }
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            return try parsePropertyRecordData(from: data, fallbackProperty: fallbackProperty)
+        } catch {
+            throw error
+        }
+    }
+
+    private func fetchAVMValue(address: String) async throws -> (estimate: Double, rangeMin: Double, rangeMax: Double, comparables: [ValuationScaleView.ComparableSnapshot]) {
+        print("PropertyDeepDive /avm/value request address=\(address)")
+
+        do {
+            let response = try await invokeRentcastProxy(endpoint: "avm_value", params: ["address": address])
+            if let credits = response["credits"] as? [String: Any],
+               let used = credits["used"] as? Int,
+               let quota = credits["quota"] as? Int {
+                await MainActor.run {
+                    RentCastUsageManager.shared.syncFromServer(usedCredits: used, quotaCredits: quota)
+                }
+            }
+
+            guard let object = response["data"] as? [String: Any] else { throw PropertyRecordsError.invalidResponse }
+
+            let estimate = findDouble(in: object, keys: ["price"]) ?? 0
+            let rangeMin = findDouble(in: object, keys: ["priceRangeLow", "rangeMin", "valueRangeLow"]) ?? (estimate * 0.9)
+            let rangeMax = findDouble(in: object, keys: ["priceRangeHigh", "rangeMax", "valueRangeHigh"]) ?? (estimate * 1.1)
+
+            let rawComps = (object["comparables"] as? [[String: Any]]) ?? []
+            let comps = rawComps.prefix(8).enumerated().map { index, item in
+                ValuationScaleView.ComparableSnapshot(
+                    title: "Comp \(String(UnicodeScalar(65 + index)!))",
+                    address: findString(in: item, keys: ["formattedAddress", "addressLine1", "address"]) ?? "Comparable",
+                    estimate: findDouble(in: item, keys: ["price", "value", "estimate"]) ?? 0,
+                    bedrooms: findInt(in: item, keys: ["bedrooms", "beds"]) ?? 0,
+                    bathrooms: findDouble(in: item, keys: ["bathrooms", "baths"]) ?? 0,
+                    squareFeet: findInt(in: item, keys: ["squareFootage", "sqft"]),
+                    daysOnMarket: findInt(in: item, keys: ["daysOnMarket", "dom"]) ?? 0
+                )
+            }
+            return (estimate: estimate, rangeMin: rangeMin, rangeMax: rangeMax, comparables: comps)
+        } catch {
+            throw error
+        }
+    }
+
+    private func invokeRentcastProxy(endpoint: String, params: [String: String]) async throws -> [String: Any] {
+        let config = BackendConfig.load()
+        guard let token = SupabaseManager.shared.client.auth.currentSession?.accessToken else {
+            throw PropertyRecordsError.invalidResponse
+        }
+
+        let url = config.supabaseURL.appendingPathComponent("functions/v1/rentcast-proxy")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 25
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "endpoint": endpoint,
+            "params": params
+        ])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw PropertyRecordsError.invalidResponse
+        }
+        let json = try JSONSerialization.jsonObject(with: data)
+        let object = json as? [String: Any] ?? [:]
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let message = (object["error"] as? String)
+                ?? (String(data: data, encoding: .utf8) ?? "Unknown response")
+            throw PropertyRecordsError.apiError(status: httpResponse.statusCode, message: message)
+        }
+        return object
+    }
+
+    private func cacheKey(for fullAddress: String) -> String {
+        normalizedAddress(fullAddress).lowercased()
+    }
+
+    private func normalizedAddress(_ raw: String) -> String {
+        raw
+            .replacingOccurrences(of: "\\s*,\\s*", with: ", ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            // Ensure "State ZIP" does not include a comma (e.g., "MA 02121", not "MA, 02121")
+            .replacingOccurrences(
+                of: ",\\s*([A-Za-z]{2})\\s*,\\s*(\\d{5}(?:-\\d{4})?)\\b",
+                with: ", $1 $2",
+                options: .regularExpression
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func parsePropertyRecordData(from data: Data, fallbackProperty: Property) throws -> IntelligenceScanData {
+        let json = try JSONSerialization.jsonObject(with: data)
+
+        let dictionary: [String: Any]
+        if let array = json as? [[String: Any]], let first = array.first {
+            dictionary = first
+        } else if let object = json as? [String: Any] {
+            dictionary = object
+        } else {
+            throw PropertyRecordsError.invalidResponse
+        }
+
+        guard !dictionary.isEmpty else { throw PropertyRecordsError.emptyResponse }
+
+        let city = fallbackProperty.city ?? "Local"
+        let state = fallbackProperty.state?.uppercased() ?? "TX"
+        let zip = fallbackProperty.zipCode ?? "00000"
+
+        let ownerNames = parseOwnerNames(from: dictionary)
+        let ownerName = ownerNames.isEmpty
+            ? (findString(in: dictionary, keys: ["ownerName", "owner_name"]) ?? "Owner unavailable")
+            : ownerNames.joined(separator: ", ")
+        let mailingAddress = parseOwnerMailingAddress(from: dictionary)
+            ?? findString(in: dictionary, keys: ["ownerAddress", "mailingAddress", "mailing_address"])
+            ?? "Address unavailable"
+        let lastSaleDate = normalizeDateString(findString(in: dictionary, keys: ["lastSaleDate", "last_sale_date", "saleDate", "sale_date"]) ?? "N/A")
+
+        let assessedValue = findDouble(in: dictionary, keys: ["taxAssessedValue", "assessedValue", "assessed_value"]) ?? (fallbackProperty.purchasePrice * 0.78)
+        let taxAmount = findDouble(in: dictionary, keys: ["propertyTaxes", "taxAmount", "tax_amount", "annualTaxes"]) ?? (fallbackProperty.annualTaxes ?? 0)
+
+        let taxHistory = parseTaxHistory(from: dictionary, fallbackTaxAmount: taxAmount, fallbackAssessedValue: assessedValue)
+
+        let yearBuilt = Int(findDouble(in: dictionary, keys: ["yearBuilt", "year_built"]) ?? 0)
+        let floorCount = Int(findDouble(in: dictionary, keys: ["features.floorCount", "stories", "storyCount", "floorCount", "floor_count"]) ?? Double((fallbackProperty.rentRoll.count >= 4) ? 2 : 1))
+        let zoningCode = findString(in: dictionary, keys: ["zoning", "zoningCode", "zoning_code"]) ?? "N/A"
+        let squareFootage = Int(findDouble(in: dictionary, keys: ["squareFootage", "livingArea", "living_area", "sqft"]) ?? Double(max(Int(fallbackProperty.rentRoll.reduce(0) { $0 + ($1.squareFeet ?? 0) }), 0)))
+        let lotSizeValue = findDouble(in: dictionary, keys: ["lotSize", "lotSizeSqFt", "lot_size", "lot_size_sqft"])
+        let lotSize = lotSizeValue.map { String(format: "%,.0f sq ft", $0) } ?? "N/A"
+        let units = Int(findDouble(in: dictionary, keys: ["features.unitCount", "units", "unitCount", "unit_count"]) ?? Double(max(fallbackProperty.rentRoll.count, 1)))
+
+        let hasHOA = parseHasHOA(from: dictionary)
+        let subdivision = findString(in: dictionary, keys: ["subdivision", "subdivisionName", "neighborhood"]) ?? "N/A"
+        let foundationType = findString(in: dictionary, keys: ["features.foundationType", "foundationType", "foundation_type", "foundation"]) ?? "N/A"
+        let coolingType = findString(in: dictionary, keys: ["features.coolingType", "coolingType", "cooling", "cooling_type"]) ?? "N/A"
+        let heatingType = findString(in: dictionary, keys: ["features.heatingType", "heatingType", "heating", "heating_type"]) ?? "N/A"
+        let isOwnerOccupied = findBool(in: dictionary, keys: ["ownerOccupied", "owner_occupied", "isOwnerOccupied"]) ?? false
+        let hasGarage = findBool(in: dictionary, keys: ["features.garage", "garage", "hasGarage", "has_garage"]) ?? false
+        let hasPool = findBool(in: dictionary, keys: ["features.pool", "pool", "hasPool", "has_pool"]) ?? false
+
+        let valuationEstimate = findDouble(in: dictionary, keys: ["price", "value", "estimatedValue", "estimate"]) ?? fallbackProperty.purchasePrice
+        let valuationRangeMin = findDouble(in: dictionary, keys: ["rentcastValueRangeLow", "valueRangeLow", "rangeMin"]) ?? (valuationEstimate * 0.92)
+        let valuationRangeMax = findDouble(in: dictionary, keys: ["rentcastValueRangeHigh", "valueRangeHigh", "rangeMax"]) ?? (valuationEstimate * 1.08)
+
+        let comparables = parseComparables(from: dictionary, city: city, state: state, zip: zip, fallbackEstimate: valuationEstimate)
+
+        return IntelligenceScanData(
+            ownerName: ownerName,
+            mailingAddress: mailingAddress,
+            lastSaleDate: lastSaleDate,
+            taxHistory: taxHistory,
+            yearBuilt: max(yearBuilt, 0),
+            floorCount: max(floorCount, 1),
+            zoningCode: zoningCode,
+            squareFootage: max(squareFootage, 0),
+            units: max(units, 1),
+            lotSize: lotSize,
+            hasHOA: hasHOA,
+            subdivision: subdivision,
+            foundationType: foundationType,
+            coolingType: coolingType,
+            heatingType: heatingType,
+            isOwnerOccupied: isOwnerOccupied,
+            hasGarage: hasGarage,
+            hasPool: hasPool,
+            valuationEstimate: valuationEstimate,
+            valuationRangeMin: valuationRangeMin,
+            valuationRangeMax: valuationRangeMax,
+            comparables: comparables
+        )
+    }
+
+    private func parseTaxHistory(from object: [String: Any], fallbackTaxAmount: Double, fallbackAssessedValue: Double) -> [TaxYearPoint] {
+        let years = parseTaxHistoryArray(from: object)
+        if !years.isEmpty { return years }
+
+        let currentYear = Calendar.current.component(.year, from: Date())
+        return (0..<5).map { offset in
+            let year = currentYear - (4 - offset)
+            let multiplier = 0.86 + (Double(offset) * 0.085)
+            return TaxYearPoint(
+                year: year,
+                taxAmount: max(fallbackTaxAmount * multiplier, 0),
+                assessedValue: max(fallbackAssessedValue * pow(1.02, Double(offset)), 0)
+            )
+        }
+    }
+
+    private func parseTaxHistoryArray(from object: [String: Any]) -> [TaxYearPoint] {
+        var pointsByYear: [Int: TaxYearPoint] = [:]
+
+        let assessmentMaps: [[String: Any]] = [
+            object["taxAssessments"] as? [String: Any],
+            object["tax_assessments"] as? [String: Any]
+        ].compactMap { $0 }
+
+        for map in assessmentMaps {
+            for (_, value) in map {
+                guard let entry = value as? [String: Any],
+                      let year = findInt(in: entry, keys: ["year"]) else { continue }
+                let assessed = findDouble(in: entry, keys: ["value", "assessedValue", "assessed_value"]) ?? 0
+                let existing = pointsByYear[year]
+                pointsByYear[year] = TaxYearPoint(
+                    year: year,
+                    taxAmount: existing?.taxAmount ?? 0,
+                    assessedValue: assessed
+                )
+            }
+        }
+
+        let taxMaps: [[String: Any]] = [
+            object["propertyTaxes"] as? [String: Any],
+            object["property_taxes"] as? [String: Any]
+        ].compactMap { $0 }
+
+        for map in taxMaps {
+            for (_, value) in map {
+                guard let entry = value as? [String: Any],
+                      let year = findInt(in: entry, keys: ["year"]) else { continue }
+                let total = findDouble(in: entry, keys: ["total", "taxAmount", "amount"]) ?? 0
+                let existing = pointsByYear[year]
+                pointsByYear[year] = TaxYearPoint(
+                    year: year,
+                    taxAmount: total,
+                    assessedValue: existing?.assessedValue ?? 0
+                )
+            }
+        }
+
+        if !pointsByYear.isEmpty {
+            return pointsByYear.values.sorted(by: { $0.year < $1.year })
+        }
+
+        let candidateArrays: [[String: Any]] = [
+            object["taxHistory"] as? [[String: Any]],
+            object["tax_history"] as? [[String: Any]]
+        ].compactMap { $0 }.flatMap { $0 }
+
+        let points = candidateArrays.compactMap { item -> TaxYearPoint? in
+            guard let year = findInt(in: item, keys: ["year", "taxYear", "assessmentYear"]) else { return nil }
+            let amount = findDouble(in: item, keys: ["taxAmount", "tax_amount", "amount", "total"]) ?? 0
+            let assessed = findDouble(in: item, keys: ["assessedValue", "assessed_value", "value"]) ?? 0
+            return TaxYearPoint(year: year, taxAmount: amount, assessedValue: assessed)
+        }
+
+        return points.sorted(by: { $0.year < $1.year })
+    }
+
+    private func parseOwnerNames(from object: [String: Any]) -> [String] {
+        guard let owner = object["owner"] as? [String: Any],
+              let names = owner["names"] as? [String] else { return [] }
+        return names
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func parseOwnerMailingAddress(from object: [String: Any]) -> String? {
+        guard let owner = object["owner"] as? [String: Any],
+              let mailing = owner["mailingAddress"] as? [String: Any] else { return nil }
+
+        if let formatted = mailing["formattedAddress"] as? String,
+           !formatted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return formatted
+        }
+
+        let line1 = (mailing["addressLine1"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let city = (mailing["city"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let state = (mailing["state"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let zip = (mailing["zipCode"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let locality = [city, state].filter { !$0.isEmpty }.joined(separator: ", ")
+        return [line1, locality, zip]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private func parseHasHOA(from object: [String: Any]) -> Bool {
+        if let hoa = object["hoa"] as? [String: Any] {
+            if let fee = findDouble(in: hoa, keys: ["fee"]), fee > 0 { return true }
+        }
+        return findBool(in: object, keys: ["hasHoa", "has_hoa", "hoa"]) ?? false
+    }
+
+    private func parseComparables(
+        from object: [String: Any],
+        city: String,
+        state: String,
+        zip: String,
+        fallbackEstimate: Double
+    ) -> [ValuationScaleView.ComparableSnapshot] {
+        let rawComps: [[String: Any]] = [
+            object["comparables"] as? [[String: Any]],
+            object["comps"] as? [[String: Any]],
+            object["nearbyHomes"] as? [[String: Any]],
+            object["nearby_homes"] as? [[String: Any]]
+        ].compactMap { $0 }.first ?? []
+
+        let mapped = rawComps.prefix(5).enumerated().map { index, item in
+            let title = "Comp \(String(UnicodeScalar(65 + index)!))"
+            let address = findString(in: item, keys: ["formattedAddress", "address", "fullAddress"])
+                ?? "\(city), \(state) \(zip)"
+            let estimate = findDouble(in: item, keys: ["price", "value", "estimatedValue", "estimate"])
+                ?? (fallbackEstimate * (0.92 + Double(index) * 0.04))
+            let beds = findInt(in: item, keys: ["bedrooms", "beds"]) ?? 0
+            let baths = findDouble(in: item, keys: ["bathrooms", "baths"]) ?? 0
+            let sqft = findInt(in: item, keys: ["squareFootage", "livingArea", "sqft"])
+            let dom = findInt(in: item, keys: ["daysOnMarket", "dom"]) ?? 0
+
+            return ValuationScaleView.ComparableSnapshot(
+                title: title,
+                address: address,
+                estimate: estimate,
+                bedrooms: beds,
+                bathrooms: baths,
+                squareFeet: sqft,
+                daysOnMarket: dom
+            )
+        }
+
+        if !mapped.isEmpty { return mapped }
+
+        return [
+            .init(title: "Comp A", address: "118 Amber Ln, \(city), \(state) \(zip)", estimate: fallbackEstimate * 0.92, bedrooms: 3, bathrooms: 2, squareFeet: 1500, daysOnMarket: 15),
+            .init(title: "Comp B", address: "240 Ridge Rd, \(city), \(state) \(zip)", estimate: fallbackEstimate * 0.98, bedrooms: 3, bathrooms: 2.5, squareFeet: 1650, daysOnMarket: 19),
+            .init(title: "Comp C", address: "75 Willow Dr, \(city), \(state) \(zip)", estimate: fallbackEstimate * 1.03, bedrooms: 4, bathrooms: 3, squareFeet: 1900, daysOnMarket: 11)
+        ]
+    }
+
+    private func normalizeDateString(_ value: String) -> String {
+        if value.count >= 10 {
+            return String(value.prefix(10))
+        }
+        return value
+    }
+
+    private func findString(in object: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if key.contains(".") {
+                if let nestedValue = valueForNestedKeyPath(key, in: object) as? String, !nestedValue.isEmpty {
+                    return nestedValue
+                }
+            } else if let value = object[key] as? String, !value.isEmpty {
+                return value
+            }
+        }
+
+        for value in object.values {
+            if let nested = value as? [String: Any], let found = findString(in: nested, keys: keys) {
+                return found
+            }
+            if let array = value as? [[String: Any]] {
+                for item in array {
+                    if let found = findString(in: item, keys: keys) {
+                        return found
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    private func findDouble(in object: [String: Any], keys: [String]) -> Double? {
+        for key in keys {
+            if key.contains(".") {
+                if let nested = valueForNestedKeyPath(key, in: object) {
+                    if let value = nested as? Double { return value }
+                    if let value = nested as? Int { return Double(value) }
+                    if let value = nested as? String, let parsed = Double(value) { return parsed }
+                }
+            } else {
+                if let value = object[key] as? Double { return value }
+                if let value = object[key] as? Int { return Double(value) }
+                if let value = object[key] as? String, let parsed = Double(value) { return parsed }
+            }
+        }
+
+        for value in object.values {
+            if let nested = value as? [String: Any], let found = findDouble(in: nested, keys: keys) {
+                return found
+            }
+            if let array = value as? [[String: Any]] {
+                for item in array {
+                    if let found = findDouble(in: item, keys: keys) { return found }
+                }
+            }
+        }
+        return nil
+    }
+
+    private func findInt(in object: [String: Any], keys: [String]) -> Int? {
+        if let doubleValue = findDouble(in: object, keys: keys) { return Int(doubleValue) }
+        return nil
+    }
+
+    private func findBool(in object: [String: Any], keys: [String]) -> Bool? {
+        for key in keys {
+            if let value = object[key] as? Bool { return value }
+            if let value = object[key] as? Int { return value != 0 }
+            if let value = object[key] as? String {
+                let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if ["true", "yes", "1"].contains(normalized) { return true }
+                if ["false", "no", "0"].contains(normalized) { return false }
+            }
+        }
+        for value in object.values {
+            if let nested = value as? [String: Any], let found = findBool(in: nested, keys: keys) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    private func valueForNestedKeyPath(_ keyPath: String, in object: [String: Any]) -> Any? {
+        keyPath
+            .split(separator: ".")
+            .map(String.init)
+            .reduce(Optional(object as Any)) { partial, key in
+                guard let dictionary = partial as? [String: Any] else { return nil }
+                return dictionary[key]
+            }
+    }
+}
+
 private enum IntelligenceScanState {
     case notRequested
     case scanning
     case loaded
 }
 
-private struct IntelligenceScanData {
+private struct IntelligenceScanData: Codable {
     let ownerName: String
     let mailingAddress: String
     let lastSaleDate: String
@@ -546,13 +1159,13 @@ private struct IntelligenceScanData {
     let isOwnerOccupied: Bool
     let hasGarage: Bool
     let hasPool: Bool
-    let valuationEstimate: Double
-    let valuationRangeMin: Double
-    let valuationRangeMax: Double
-    let comparables: [ValuationScaleView.ComparableSnapshot]
+    var valuationEstimate: Double
+    var valuationRangeMin: Double
+    var valuationRangeMax: Double
+    var comparables: [ValuationScaleView.ComparableSnapshot]
 }
 
-private struct TaxYearPoint: Identifiable {
+private struct TaxYearPoint: Identifiable, Codable {
     var id: Int { year }
     let year: Int
     let taxAmount: Double
@@ -678,6 +1291,7 @@ private struct ShimmerEffect: ViewModifier {
     }
 }
 
+#if DEBUG
 #Preview("Deep Dive - Free") {
     NavigationStack {
         PropertyDeepDiveView(property: previewProperty)
@@ -718,3 +1332,4 @@ private func previewSubscriptionManager(isPremium: Bool) -> SubscriptionManager 
     manager.setPreviewPremium(isPremium)
     return manager
 }
+#endif

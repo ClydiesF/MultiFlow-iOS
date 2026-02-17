@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var newPassword = ""
     @State private var confirmPassword = ""
     @State private var passwordUpdateError: String?
+    @StateObject private var usageManager = RentCastUsageManager.shared
     private let shareAppURL = URL(string: "https://multiflow.app")!
 
     var body: some View {
@@ -319,10 +320,42 @@ struct SettingsView: View {
                     .foregroundStyle(Color.richBlack.opacity(0.72))
             }
             .buttonStyle(.plain)
+
+            if subscriptionManager.isPremium {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Insight Credits")
+                            .font(.system(.footnote, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.richBlack.opacity(0.7))
+                        Spacer()
+                        Text("\(usageManager.snapshot.remainingCredits) / \(usageManager.snapshot.quotaCredits)")
+                            .font(.system(.caption, design: .rounded).weight(.bold))
+                            .foregroundStyle(Color.primaryYellow)
+                    }
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule(style: .continuous)
+                                .fill(Color.softGray)
+                            Capsule(style: .continuous)
+                                .fill(Color.primaryYellow)
+                                .frame(width: geo.size.width * usageManager.snapshot.usageRatio)
+                        }
+                    }
+                    .frame(height: 8)
+
+                    Text("Costs: Markets 1 • Rent AVM 1 • Value AVM 1 • Property Records 2")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 2)
+            }
         }
         .cardStyle()
         .task {
             await subscriptionManager.refreshCustomerInfo()
+            usageManager.ensureCurrentMonth()
         }
     }
 

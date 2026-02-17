@@ -11,6 +11,7 @@ struct PremiumPaywallView: View {
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var subscriptionManager: SubscriptionManager
+    @StateObject private var usageManager = RentCastUsageManager.shared
 
     @State private var dragOffset: CGSize = .zero
     @State private var errorText: String?
@@ -18,8 +19,8 @@ struct PremiumPaywallView: View {
     private let features: [ProFeature] = [
         .init(icon: "bolt.fill", title: "Auto-Fill", caption: "Address completion in seconds"),
         .init(icon: "map.fill", title: "Nationwide Taxes", caption: "State-aware tax defaults"),
-        .init(icon: "chart.bar.fill", title: "Market Insights", caption: "Faster rent + deal context"),
-        .init(icon: "sparkles", title: "Smart Suggestions", caption: "Guided underwriting inputs")
+        .init(icon: "chart.bar.fill", title: "Market Insights", caption: "Live market/rent intelligence"),
+        .init(icon: "fuelpump.fill", title: "25 Insight Credits", caption: "Monthly API-backed data budget")
     ]
 
     var body: some View {
@@ -36,10 +37,10 @@ struct PremiumPaywallView: View {
                     VStack(spacing: 20) {
                         header
                         heroCard
+                        creditsSummaryCard
                         planPicker
                         benefitsGrid
                         mainCTA
-                        lifetimeCTA
                         legalLinks
                     }
                     .padding(.horizontal, 20)
@@ -117,9 +118,13 @@ struct PremiumPaywallView: View {
                     .font(.system(.headline, design: .rounded).weight(.semibold))
                     .foregroundStyle(Color.white.opacity(0.9))
 
-                Text(subscriptionManager.selectedPlanPriceLabel)
+                Text(displayPrice(for: subscriptionManager.selectedPlan))
                     .font(.system(.subheadline, design: .rounded).weight(.medium))
                     .foregroundStyle(Color.primaryYellow.opacity(0.88))
+
+                Text("Includes 25 Insight Credits / month")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.65))
             }
             .padding(.vertical, 30)
         }
@@ -148,10 +153,38 @@ struct PremiumPaywallView: View {
         )
     }
 
+    private var creditsSummaryCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Insight Credit Model")
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .foregroundStyle(.white)
+                Spacer()
+                Text("\(usageManager.snapshot.remainingCredits) left")
+                    .font(.system(.caption, design: .rounded).weight(.bold))
+                    .foregroundStyle(Color.primaryYellow)
+            }
+
+            Text("Markets 1 • Rent AVM 1 • Value AVM 1 • Deep Dive Records 2")
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.65))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+    }
+
     private var planPicker: some View {
         Picker("Billing", selection: $subscriptionManager.selectedPlan) {
             ForEach(SubscriptionManager.BillingPlan.allCases) { plan in
-                Text(plan.rawValue).tag(plan)
+                Text(planPickerLabel(for: plan)).tag(plan)
             }
         }
         .pickerStyle(.segmented)
@@ -218,34 +251,6 @@ struct PremiumPaywallView: View {
         .opacity(subscriptionManager.isPurchasing ? 0.8 : 1)
     }
 
-    private var lifetimeCTA: some View {
-        Button {
-            Task {
-                let didUnlock = await subscriptionManager.purchaseLifetime()
-                if didUnlock { dismiss() }
-            }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "infinity")
-                    .font(.system(size: 13, weight: .bold))
-                Text("Lifetime · \(subscriptionManager.lifetimePriceLabel)")
-                    .font(.system(.subheadline, design: .rounded).weight(.bold))
-            }
-            .foregroundStyle(Color.white.opacity(0.9))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(0.08))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
     private var legalLinks: some View {
         VStack(spacing: 8) {
             HStack(spacing: 14) {
@@ -281,6 +286,24 @@ struct PremiumPaywallView: View {
     private func openExternal(_ value: String) {
         guard let url = URL(string: value) else { return }
         UIApplication.shared.open(url)
+    }
+
+    private func displayPrice(for plan: SubscriptionManager.BillingPlan) -> String {
+        switch plan {
+        case .monthly:
+            return "$10/month"
+        case .annual:
+            return "$150/year"
+        }
+    }
+
+    private func planPickerLabel(for plan: SubscriptionManager.BillingPlan) -> String {
+        switch plan {
+        case .monthly:
+            return "Monthly · $10"
+        case .annual:
+            return "Annual · $150"
+        }
     }
 }
 

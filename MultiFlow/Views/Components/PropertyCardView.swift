@@ -9,7 +9,7 @@ struct PropertyCardView: View {
     var body: some View {
         frontCard
             .frame(maxWidth: .infinity)
-            .frame(height: 232)
+            .frame(height: hasPropertyImage ? 232 : 168)
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .onTapGesture {
             onOpenDetail?()
@@ -18,50 +18,48 @@ struct PropertyCardView: View {
 
     private var frontCard: some View {
         VStack(spacing: 0) {
-            ZStack(alignment: .topTrailing) {
-                AsyncImage(url: propertyImageURL) { phase in
-                    switch phase {
-                    case .empty:
-                        propertyImagePlaceholder
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .failure:
-                        propertyImagePlaceholder
-                    @unknown default:
-                        propertyImagePlaceholder
+            if hasPropertyImage {
+                ZStack(alignment: .topTrailing) {
+                    AsyncImage(url: propertyImageURL) { phase in
+                        switch phase {
+                        case .empty:
+                            Color.softGray
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        case .failure:
+                            Color.softGray
+                        @unknown default:
+                            Color.softGray
+                        }
                     }
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 112)
-                .clipShape(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                )
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 112)
+                    .clipShape(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    )
 
-                gradeBadge
-                    .padding(10)
-            }
-            .overlay(alignment: .topLeading) {
-                HStack(spacing: 8) {
-                    if property.isProvisionalEstimate {
-                        Text("Estimate")
-                            .font(.system(.caption2, design: .rounded).weight(.bold))
-                            .foregroundStyle(Color.richBlack)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(Color.primaryYellow.opacity(0.88))
-                            )
-                    }
-
-                    ownershipChip
+                    gradeBadge
+                        .padding(10)
                 }
-                .padding(10)
+
+                .overlay(alignment: .topLeading) {
+                    statusChips
+                        .padding(10)
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
+                if !hasPropertyImage {
+                    HStack {
+                        statusChips
+                        Spacer()
+                        gradeBadge
+                    }
+                    .padding(.bottom, 2)
+                }
+
                 Text(property.address)
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundStyle(Color.richBlack)
@@ -107,7 +105,7 @@ struct PropertyCardView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.top, 10)
+            .padding(.top, hasPropertyImage ? 10 : 8)
             .padding(.bottom, 12)
         }
         .padding(8)
@@ -146,22 +144,22 @@ struct PropertyCardView: View {
         )
     }
 
-    private var propertyImagePlaceholder: some View {
-        ZStack {
-            LinearGradient(
-                colors: [Color.softGray, Color.cardSurface],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+    private var hasPropertyImage: Bool { propertyImageURL != nil }
 
-            VStack(spacing: 8) {
-                Image(systemName: "house.fill")
-                    .font(.system(size: 32, weight: .semibold))
-                    .foregroundStyle(Color.richBlack.opacity(0.55))
-                Text("No Photo")
-                    .font(.system(.footnote, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Color.richBlack.opacity(0.52))
+    private var statusChips: some View {
+        HStack(spacing: 8) {
+            if property.isProvisionalEstimate {
+                Text("Estimate")
+                    .font(.system(.caption2, design: .rounded).weight(.bold))
+                    .foregroundStyle(Color.richBlack)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.primaryYellow.opacity(0.88))
+                    )
             }
+            ownershipChip
         }
     }
 

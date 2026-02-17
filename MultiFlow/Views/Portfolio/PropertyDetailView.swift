@@ -79,7 +79,7 @@ struct PropertyDetailView: View {
     @State private var isLoadingMarketInsights = false
     @State private var showMarketInsightPaywall = false
     @State private var marketInsightError: String?
-    @State private var suggestedMarketRentPerUnit: Double?
+    @State private var rentAVMSnapshot: MarketInsightsService.RentalMarketAVMSnapshot?
     @State private var showDeepDive = false
     @State private var persistedPropertySnapshot: Property?
 
@@ -199,10 +199,7 @@ struct PropertyDetailView: View {
                 baselineMetrics: MetricsEngine.computeMetrics(property: activeProperty),
                 baselineGrade: weightedGrade(for: activeProperty),
                 evaluateScenario: { scenario in
-                    var scenarioProperty = activeProperty
-                    scenarioProperty.downPaymentPercent = scenario.downPaymentPercent
-                    scenarioProperty.renoBudget = scenario.renoReserve
-                    return evaluatedMetricsAndGrade(for: scenarioProperty)
+                    return evaluateCashToCloseScenario(scenario)
                 }
             ) { scenario in
                 applyCashToCloseScenario(scenario)
@@ -1641,14 +1638,23 @@ struct PropertyDetailView: View {
 
         guard subscriptionManager.checkAccess(feature: .marketInsights) else {
             isLoadingMarketInsights = false
-            suggestedMarketRentPerUnit = nil
+            rentAVMSnapshot = nil
             return
         }
 
-        suggestedMarketRentPerUnit = await marketInsightsService.suggestMonthlyRentPerUnit(
-            city: activeProperty.city,
-            state: activeProperty.state
-        )
+        let addressLine = activeProperty.address.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cityLine = (activeProperty.city ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let stateLine = (activeProperty.state ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let zipLine = (activeProperty.zipCode ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let fullAddress = [addressLine, cityLine, stateLine, zipLine]
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+
+        if !fullAddress.isEmpty {
+            if let avm = try? await marketInsightsService.fetchLongTermRentAVM(fullAddress: fullAddress) {
+                rentAVMSnapshot = avm
+            }
+        }
 
         guard let zip = activeProperty.zipCode?.trimmingCharacters(in: .whitespacesAndNewlines),
               !zip.isEmpty else {
@@ -1668,8 +1674,19 @@ struct PropertyDetailView: View {
             )
         } catch {
             marketInsightSnapshot = nil
-            marketInsightError = error.localizedDescription
+            marketInsightError = userFriendlyMarketError(error)
         }
+    }
+
+    private func userFriendlyMarketError(_ error: Error) -> String {
+        let message = error.localizedDescription.lowercased()
+        if message.contains("quota") || message.contains("credits") || message.contains("remaining credits") {
+            return "Monthly insight credits reached. Upgrade or wait until next month to continue market scans."
+        }
+        if message.contains("unauthorized") || message.contains("invalid auth") {
+            return "Please sign in again to load market insights."
+        }
+        return error.localizedDescription
     }
 
     private var currentUnitRent: Double {
@@ -1679,11 +1696,22 @@ struct PropertyDetailView: View {
     }
 
     private var marketMedianUnitRent: Double {
-        let suggested = suggestedMarketRentPerUnit ?? defaultMonthlyRentPerUnit
+        let avmRent = rentAVMSnapshot?.rent
+        let suggested = avmRent ?? defaultMonthlyRentPerUnit
         return max(suggested, currentUnitRent * 0.9)
     }
 
     private var rentalMarketComparables: [RentalMarketScaleView.RentalComparable] {
+        if let avmComps = rentAVMSnapshot?.comparables, !avmComps.isEmpty {
+            return avmComps.prefix(8).map {
+                RentalMarketScaleView.RentalComparable(
+                    address: $0.address,
+                    monthlyRent: $0.monthlyRent,
+                    distanceMiles: $0.distanceMiles
+                )
+            }
+        }
+
         let cityText = activeProperty.city ?? "Local"
         let stateText = activeProperty.state ?? "TX"
         let base = marketMedianUnitRent
@@ -2118,6 +2146,54 @@ struct PropertyDetailView: View {
                 try await propertyStore.updateProperty(updated)
             } catch { }
         }
+    }
+
+    private func evaluateCashToCloseScenario(_ scenario: CashToCloseScenarioValues) -> (metrics: DealMetrics?, grade: Grade) {
+        var scenarioProperty = activeProperty
+        scenarioProperty.downPaymentPercent = scenario.downPaymentPercent
+        scenarioProperty.renoBudget = scenario.renoReserve
+
+        guard var metrics = MetricsEngine.computeMetrics(property: scenarioProperty) else {
+            return (nil, .dOrF)
+        }
+
+        let downPaymentCash = max(scenarioProperty.purchasePrice * (scenario.downPaymentPercent / 100.0), 0)
+        let closingCostCash = max(scenarioProperty.purchasePrice * (scenario.closingCostRate / 100.0), 0)
+        let renoCash = max(scenario.renoReserve, 0)
+        let totalCashToClose = max(downPaymentCash + closingCostCash + renoCash, 0.0001)
+
+        let adjustedCoC = metrics.annualCashFlow / totalCashToClose
+        metrics.cashOnCash = adjustedCoC
+        metrics.grade = MetricsEngine.gradeFor(cashOnCash: adjustedCoC, dcr: metrics.debtCoverageRatio)
+
+        let annualPrincipalPaydown: Double = {
+            guard let down = scenarioProperty.downPaymentPercent,
+                  let rate = scenarioProperty.interestRate,
+                  let breakdown = MetricsEngine.mortgageBreakdown(
+                    purchasePrice: scenarioProperty.purchasePrice,
+                    downPaymentPercent: down,
+                    interestRate: rate,
+                    loanTermYears: Double(scenarioProperty.loanTermYears ?? 30),
+                    annualTaxes: scenarioProperty.annualTaxes ?? (scenarioProperty.annualTaxesInsurance ?? 0),
+                    annualInsurance: scenarioProperty.annualInsurance ?? 0
+                  ) else {
+                return 0
+            }
+            return breakdown.annualPrincipal
+        }()
+
+        let profile = gradeProfileStore.effectiveProfile(for: scenarioProperty)
+        let grade = MetricsEngine.weightedGrade(
+            metrics: metrics,
+            purchasePrice: scenarioProperty.purchasePrice,
+            unitCount: max(scenarioProperty.rentRoll.count, 1),
+            annualPrincipalPaydown: annualPrincipalPaydown,
+            appreciationRate: scenarioProperty.appreciationRate ?? 0,
+            cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,
+            profile: profile
+        )
+
+        return (metrics, grade)
     }
 
     private var mortgageBreakdown: MortgageBreakdown? {

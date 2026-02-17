@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ValuationScaleView: View {
-    struct ComparableSnapshot: Identifiable, Hashable {
+    struct ComparableSnapshot: Identifiable, Hashable, Codable {
         let id: UUID
         let title: String
         let address: String
@@ -195,4 +195,3 @@ struct ValuationScaleView: View {
         .padding(20)
     }
 }
-
