@@ -27,6 +27,13 @@ struct MultiFlowApp: App {
                 .environmentObject(gradeProfileStore)
                 .environmentObject(subscriptionManager)
                 .preferredColorScheme(preferredScheme)
+                .task {
+                    subscriptionManager.configureIfNeeded()
+                    await subscriptionManager.syncAuthUser(authViewModel.user?.id)
+                }
+                .task(id: authViewModel.user?.id) {
+                    await subscriptionManager.syncAuthUser(authViewModel.user?.id)
+                }
                 .onOpenURL { url in
                     Task { await authViewModel.handleIncomingURL(url) }
                 }
