@@ -10,6 +10,7 @@ struct PremiumPaywallView: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var authViewModel: AuthViewModel
     @EnvironmentObject var subscriptionManager: SubscriptionManager
     @StateObject private var usageManager = RentCastUsageManager.shared
 
@@ -57,6 +58,7 @@ struct PremiumPaywallView: View {
         }
         .task {
             subscriptionManager.configureIfNeeded()
+            await subscriptionManager.syncAuthUser(authViewModel.user?.id)
             await subscriptionManager.refreshOfferings()
             await subscriptionManager.refreshCustomerInfo()
         }
@@ -315,5 +317,6 @@ struct PaywallView: View {
 
 #Preview {
     PremiumPaywallView()
+        .environmentObject(AuthViewModel())
         .environmentObject(SubscriptionManager())
 }
