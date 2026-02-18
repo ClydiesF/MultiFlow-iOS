@@ -142,7 +142,6 @@ final class SubscriptionManager: NSObject, ObservableObject, PurchasesDelegate {
     }
 
     private enum Constants {
-        static let fallbackAPIKey = "test_tLWwpGYldPETCFplXsTRbTxdlOI"
         static let fallbackEntitlementID = "MultiFlow: Property Evaluator Pro"
         static let monthlyPackageID = "monthly"
         static let yearlyPackageID = "yearly"
@@ -179,10 +178,14 @@ final class SubscriptionManager: NSObject, ObservableObject, PurchasesDelegate {
 
         let apiKey = (Bundle.main.object(forInfoDictionaryKey: "REVENUECAT_API_KEY") as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedKey = (apiKey?.isEmpty == false) ? apiKey! : Constants.fallbackAPIKey
+#if DEBUG
+        let resolvedKey = (apiKey?.isEmpty == false) ? apiKey! : "test_tLWwpGYldPETCFplXsTRbTxdlOI"
+#else
+        let resolvedKey = apiKey ?? ""
+#endif
 
         guard !resolvedKey.isEmpty else {
-            lastErrorMessage = "Missing RevenueCat API key."
+            lastErrorMessage = "Missing RevenueCat API key for this build."
             return
         }
 
