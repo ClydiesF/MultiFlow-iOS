@@ -17,8 +17,8 @@ struct AuthView: View {
     @State private var setPassword = ""
     @State private var setConfirmPassword = ""
     @State private var setPasswordError: String?
-    private let termsURL = URL(string: "https://multiflow.app/terms")
-    private let privacyURL = URL(string: "https://multiflow.app/privacy")
+    private let termsURL = URL(string: "https://clydiesf.github.io/MultiFlow-iOS/terms.html")
+    private let privacyURL = URL(string: "https://clydiesf.github.io/MultiFlow-iOS/privacy.html")
 
     var body: some View {
         ZStack {

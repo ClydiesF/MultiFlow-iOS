@@ -16,6 +16,8 @@ struct SettingsView: View {
     @State private var passwordUpdateError: String?
     @StateObject private var usageManager = RentCastUsageManager.shared
     private let shareAppURL = URL(string: "https://multiflow.app")!
+    private let termsURL = URL(string: "https://clydiesf.github.io/MultiFlow-iOS/terms.html")!
+    private let privacyURL = URL(string: "https://clydiesf.github.io/MultiFlow-iOS/privacy.html")!
 
     var body: some View {
         ZStack {
@@ -452,16 +454,12 @@ struct SettingsView: View {
                 .font(.system(.headline, design: .rounded).weight(.semibold))
                 .foregroundStyle(Color.richBlack)
 
-            NavigationLink {
-                TermsAndConditionsView()
-            } label: {
+            Link(destination: termsURL) {
                 legalRow(title: "Terms & Conditions", icon: "doc.text")
             }
             .buttonStyle(.plain)
 
-            NavigationLink {
-                PrivacyPolicyView()
-            } label: {
+            Link(destination: privacyURL) {
                 legalRow(title: "Privacy Policy", icon: "lock.doc")
             }
             .buttonStyle(.plain)

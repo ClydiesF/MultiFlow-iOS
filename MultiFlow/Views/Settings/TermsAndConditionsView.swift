@@ -2,7 +2,7 @@ import SwiftUI
 
 struct TermsAndConditionsView: View {
     @Environment(\.openURL) private var openURL
-    private let termsURL = URL(string: "https://multiflow.app/terms")
+    private let termsURL = URL(string: "https://clydiesf.github.io/MultiFlow-iOS/terms.html")
 
     var body: some View {
         ZStack {

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct PrivacyPolicyView: View {
     @Environment(\.openURL) private var openURL
-    private let privacyURL = URL(string: "https://multiflow.app/privacy")
+    private let privacyURL = URL(string: "https://clydiesf.github.io/MultiFlow-iOS/privacy.html")
 
     var body: some View {
         ZStack {
