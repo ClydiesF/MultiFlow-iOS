@@ -1,6 +1,7 @@
 import Foundation
 
 enum MetricInfoType: String, Identifiable, CaseIterable, Hashable {
+    case arv
     case netOperatingIncome
     case cashFlow
     case capRate
@@ -11,6 +12,7 @@ enum MetricInfoType: String, Identifiable, CaseIterable, Hashable {
 
     var title: String {
         switch self {
+        case .arv: return "After Repair Value (ARV)"
         case .netOperatingIncome: return "Net Operating Income (NOI)"
         case .cashFlow: return "Cash Flow"
         case .capRate: return "Cap Rate"

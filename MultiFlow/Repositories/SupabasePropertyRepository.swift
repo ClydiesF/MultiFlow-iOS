@@ -7,12 +7,13 @@ final class SupabasePropertyRepository: PropertyRepositoryProtocol {
     private var channel: RealtimeChannelV2?
     private var listenTask: Task<Void, Never>?
 
-    init(
-        client: SupabaseClient = SupabaseManager.shared.client,
-        imageStorage: ImageStorageServiceProtocol = SupabaseImageStorageService()
-    ) {
+    init(client: SupabaseClient, imageStorage: ImageStorageServiceProtocol) {
         self.client = client
         self.imageStorage = imageStorage
+    }
+
+    convenience init() {
+        self.init(client: SupabaseManager.shared.client, imageStorage: SupabaseImageStorageService())
     }
 
     func fetchProperties(for userId: String) async throws -> [Property] {

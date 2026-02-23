@@ -8,19 +8,12 @@ struct PropertyRow: View {
     var body: some View {
         VStack(spacing: 12) {
             ZStack(alignment: .topTrailing) {
-                AsyncImage(url: URL(string: property.imageURL)) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .failure(_):
-                        Color.softGray
-                    case .empty:
-                        Color.softGray
-                    @unknown default:
-                        Color.softGray
-                    }
+                DownsampledRemoteImageView(
+                    urlString: property.imageURL,
+                    maxPixelSize: 960,
+                    contentMode: .fill
+                ) {
+                    Color.softGray
                 }
                 .frame(height: 140)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))

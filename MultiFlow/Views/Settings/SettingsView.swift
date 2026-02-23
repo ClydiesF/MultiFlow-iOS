@@ -29,6 +29,7 @@ struct SettingsView: View {
                     subscriptionSection
                     estimatedDefaultsSection
                     glossarySection
+                    legalSection
                     shareAppSection
 
                     Button("Sign Out") {
@@ -443,6 +444,53 @@ struct SettingsView: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private var legalSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Legal")
+                .font(.system(.headline, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack)
+
+            NavigationLink {
+                TermsAndConditionsView()
+            } label: {
+                legalRow(title: "Terms & Conditions", icon: "doc.text")
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink {
+                PrivacyPolicyView()
+            } label: {
+                legalRow(title: "Privacy Policy", icon: "lock.doc")
+            }
+            .buttonStyle(.plain)
+        }
+        .cardStyle()
+    }
+
+    private func legalRow(title: String, icon: String) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Color.primaryYellow.opacity(0.2))
+                    .frame(width: 34, height: 34)
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.richBlack)
+            }
+
+            Text(title)
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack)
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.richBlack.opacity(0.4))
+        }
+        .padding(.vertical, 4)
     }
 
     private var header: some View {

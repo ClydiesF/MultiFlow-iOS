@@ -82,6 +82,16 @@ struct MFMetricEngine {
         return max(maxLoanAmount / ltv, 0)
     }
 
+    static func maximumAllowableOffer(
+        arv: Double,
+        rehabCosts: Double,
+        fixedCosts: Double,
+        sellingCosts: Double,
+        desiredProfit: Double
+    ) -> Double {
+        max(arv - rehabCosts - fixedCosts - sellingCosts - desiredProfit, 0)
+    }
+
     private static func annualMortgagePaymentPerDollar(annualInterestRate: Double, years: Double) -> Double {
         let monthlyRate = (annualInterestRate / 100.0) / 12.0
         let numberOfPayments = years * 12.0

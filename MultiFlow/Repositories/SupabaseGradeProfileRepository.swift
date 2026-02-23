@@ -7,8 +7,12 @@ final class SupabaseGradeProfileRepository: GradeProfileRepositoryProtocol {
     private var defaultsChannel: RealtimeChannelV2?
     private var listenTasks: [Task<Void, Never>] = []
 
-    init(client: SupabaseClient = SupabaseManager.shared.client) {
+    init(client: SupabaseClient) {
         self.client = client
+    }
+
+    convenience init() {
+        self.init(client: SupabaseManager.shared.client)
     }
 
     func fetchProfiles(for userId: String) async throws -> [GradeProfile] {

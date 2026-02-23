@@ -11,9 +11,16 @@ final class PropertyStore: ObservableObject {
     @Published var lastDeletedProperty: Property?
 
     private let repository: PropertyRepositoryProtocol
+    private let client: SupabaseClient
 
-    init(repository: PropertyRepositoryProtocol = SupabasePropertyRepository()) {
+    init(repository: PropertyRepositoryProtocol, client: SupabaseClient) {
         self.repository = repository
+        self.client = client
+    }
+
+    @MainActor
+    convenience init(repository: PropertyRepositoryProtocol = SupabasePropertyRepository()) {
+        self.init(repository: repository, client: SupabaseManager.shared.client)
     }
 
     func listen() {
@@ -110,10 +117,10 @@ final class PropertyStore: ObservableObject {
     }
 
     private var currentUserId: String? {
-        if let user = SupabaseManager.shared.client.auth.currentUser {
+        if let user = client.auth.currentUser {
             return user.id.uuidString
         }
-        if let sessionUser = SupabaseManager.shared.client.auth.currentSession?.user {
+        if let sessionUser = client.auth.currentSession?.user {
             return sessionUser.id.uuidString
         }
         return nil

@@ -9,6 +9,7 @@ final class AuthViewModel: ObservableObject {
     @Published var authNotice: String?
     @Published var isRecoveringPassword = false
     @Published var didCreateAccount = false
+    @Published var isBootstrapping = true
 
     private var currentNonce: String?
     private let authService: AuthServiceProtocol
@@ -19,6 +20,7 @@ final class AuthViewModel: ObservableObject {
         Task {
             await self.authService.restoreSession()
             self.user = self.authService.currentUser
+            self.isBootstrapping = false
         }
     }
 

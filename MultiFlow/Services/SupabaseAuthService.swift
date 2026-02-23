@@ -7,8 +7,12 @@ final class SupabaseAuthService: AuthServiceProtocol {
     private let client: SupabaseClient
     private(set) var currentUser: AppUser?
 
-    init(client: SupabaseClient = SupabaseManager.shared.client) {
+    init(client: SupabaseClient) {
         self.client = client
+    }
+
+    convenience init() {
+        self.init(client: SupabaseManager.shared.client)
     }
 
     func restoreSession() async {

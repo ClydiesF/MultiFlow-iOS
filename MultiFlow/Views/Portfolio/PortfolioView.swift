@@ -17,6 +17,12 @@ struct PortfolioView: View {
     @State private var restoreErrorMessage: String?
     @State private var selectedPropertyForDetail: Property?
     @State private var isShowingPropertyDetail = false
+    @State private var sortOption: PortfolioSortOption = .recency
+    @AppStorage("portfolioTrendBaselineMonthKey") private var trendBaselineMonthKey = ""
+    @AppStorage("portfolioTrendBaselinePropertyCount") private var trendBaselinePropertyCount = 0
+    @AppStorage("portfolioTrendBaselineDoors") private var trendBaselineDoors = 0
+    @AppStorage("portfolioTrendBaselineValue") private var trendBaselineValue = 0.0
+    @Namespace private var cardHeroNamespace
 
     var body: some View {
         ZStack {
@@ -36,14 +42,51 @@ struct PortfolioView: View {
                         emptyState
                     } else {
                         LazyVStack(spacing: 30) {
-                            ForEach(propertyStore.properties) { property in
-                                PropertyCardView(property: property, onOpenDetail: {
-                                    selectedPropertyForDetail = property
-                                    isShowingPropertyDetail = true
-                                })
+                            ForEach(sortedProperties) { property in
+                                PropertyCardView(
+                                    property: property,
+                                    onOpenDetail: {
+                                        selectedPropertyForDetail = property
+                                        withAnimation(.spring(response: 0.46, dampingFraction: 0.86)) {
+                                            isShowingPropertyDetail = true
+                                        }
+                                    },
+                                    heroNamespace: cardHeroNamespace,
+                                    heroID: cardHeroID(for: property)
+                                )
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button {
+                                        selectedPropertyForDetail = property
+                                        withAnimation(.spring(response: 0.46, dampingFraction: 0.86)) {
+                                            isShowingPropertyDetail = true
+                                        }
+                                    } label: {
+                                        Label("Analyze", systemImage: "waveform.path.ecg")
+                                    }
+                                    .tint(Color.primaryYellow)
+
+                                    Button(role: .destructive) {
+                                        Task {
+                                            do {
+                                                try await propertyStore.deleteProperty(property)
+                                            } catch {
+                                                await MainActor.run {
+                                                    restoreErrorMessage = error.localizedDescription
+                                                    withAnimation(.easeOut(duration: 0.2)) {
+                                                        showRestoreErrorToast = true
+                                                    }
+                                                    scheduleRestoreErrorDismiss()
+                                                }
+                                            }
+                                        }
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
                                 .padding(.bottom, 4)
                             }
                         }
+                        .padding(.top, 10)
                     }
                 }
                 .padding(24)
@@ -67,14 +110,29 @@ struct PortfolioView: View {
                 .padding(.top, 8)
                 .frame(maxHeight: .infinity, alignment: .top)
             }
+
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    fabAddButton
+                }
+                .padding(.horizontal, 22)
+                .padding(.bottom, 25)
+            }
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $isShowingPropertyDetail) {
             if let property = selectedPropertyForDetail {
-                PropertyDetailView(property: property)
+                PropertyDetailView(
+                    property: property,
+                    cardHeroNamespace: cardHeroNamespace,
+                    cardHeroID: cardHeroID(for: property)
+                )
                     .environmentObject(propertyStore)
                     .environmentObject(gradeProfileStore)
+                    .environmentObject(subscriptionManager)
             } else {
                 EmptyView()
             }
@@ -95,11 +153,28 @@ struct PortfolioView: View {
                 }
                 .accessibilityLabel("Grade profiles")
 
-                Button {
-                    presentAddPropertyFlow()
+                Menu {
+                    Button {
+                        sortOption = .roi
+                    } label: {
+                        Label("ROI", systemImage: sortOption == .roi ? "checkmark" : "percent")
+                    }
+
+                    Button {
+                        sortOption = .cashFlow
+                    } label: {
+                        Label("Cash Flow", systemImage: sortOption == .cashFlow ? "checkmark" : "dollarsign.circle")
+                    }
+
+                    Button {
+                        sortOption = .recency
+                    } label: {
+                        Label("Recency", systemImage: sortOption == .recency ? "checkmark" : "clock")
+                    }
                 } label: {
-                    Image(systemName: "plus")
+                    Image(systemName: "line.3.horizontal.decrease.circle")
                 }
+                .accessibilityLabel("Filter and sort properties")
             }
         }
         .sheet(isPresented: $showingAdd, onDismiss: {
@@ -139,7 +214,11 @@ struct PortfolioView: View {
             }
         }
         .onAppear {
+            refreshTrendBaselineIfNeeded()
             propertyStore.listen()
+        }
+        .onChange(of: propertyStore.properties) { _, _ in
+            refreshTrendBaselineIfNeeded()
         }
         .onDisappear {
             propertyStore.stopListening()
@@ -174,15 +253,33 @@ struct PortfolioView: View {
 
     private var portfolioSummarySection: some View {
         let metrics = portfolioMetrics
+        let trends = portfolioTrends
         return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                PortfolioMetricTile(title: "Properties", value: String(metrics.propertyCount))
-                PortfolioMetricTile(title: "Doors", value: String(metrics.totalDoors))
-                PortfolioMetricTile(title: "Portfolio Value", value: Formatters.currencyTwo.string(from: NSNumber(value: metrics.totalValue)) ?? "$0")
+            HStack(spacing: 14) {
+                PortfolioMetricTile(
+                    title: "Properties",
+                    value: String(metrics.propertyCount),
+                    trend: trends.properties
+                )
+                PortfolioMetricTile(
+                    title: "Doors",
+                    value: String(metrics.totalDoors),
+                    trend: trends.doors
+                )
+                PortfolioMetricTile(
+                    title: "Portfolio Value",
+                    value: Formatters.currency.string(from: NSNumber(value: metrics.totalValue)) ?? "$0",
+                    trend: trends.value
+                )
             }
+            .scrollTargetLayout()
             .padding(.vertical, 2)
-            .padding(.horizontal, 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentMargins(.horizontal, 24, for: .scrollContent)
+        .scrollIndicators(.hidden)
+        .scrollTargetBehavior(.viewAligned)
+        .padding(.horizontal, -24)
     }
 
     private var portfolioMetrics: PortfolioMetrics {
@@ -195,6 +292,35 @@ struct PortfolioView: View {
             propertyCount: ownedProperties.count,
             totalDoors: totalDoors,
             totalValue: totalValue
+        )
+    }
+
+    private var sortedProperties: [Property] {
+        let base = propertyStore.properties
+        switch sortOption {
+        case .recency:
+            return base
+        case .cashFlow:
+            return base.sorted { lhs, rhs in
+                let left = MetricsEngine.computeMetrics(property: lhs)?.annualCashFlow ?? 0
+                let right = MetricsEngine.computeMetrics(property: rhs)?.annualCashFlow ?? 0
+                return left > right
+            }
+        case .roi:
+            return base.sorted { lhs, rhs in
+                let left = MetricsEngine.computeMetrics(property: lhs)?.cashOnCash ?? 0
+                let right = MetricsEngine.computeMetrics(property: rhs)?.cashOnCash ?? 0
+                return left > right
+            }
+        }
+    }
+
+    private var portfolioTrends: PortfolioMetricTrends {
+        let metrics = portfolioMetrics
+        return PortfolioMetricTrends(
+            properties: makeTrendLabel(current: Double(metrics.propertyCount), baseline: Double(trendBaselinePropertyCount)),
+            doors: makeTrendLabel(current: Double(metrics.totalDoors), baseline: Double(trendBaselineDoors)),
+            value: makeTrendLabel(current: metrics.totalValue, baseline: trendBaselineValue)
         )
     }
 
@@ -217,6 +343,31 @@ struct PortfolioView: View {
         }
 
         return CashFlowHealth(positive: positive, breakEven: breakEven, negative: negative)
+    }
+
+    private func refreshTrendBaselineIfNeeded() {
+        let monthKey = currentMonthKey()
+        guard trendBaselineMonthKey != monthKey else { return }
+        let metrics = portfolioMetrics
+        trendBaselineMonthKey = monthKey
+        trendBaselinePropertyCount = metrics.propertyCount
+        trendBaselineDoors = metrics.totalDoors
+        trendBaselineValue = metrics.totalValue
+    }
+
+    private func currentMonthKey() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM"
+        return formatter.string(from: Date())
+    }
+
+    private func makeTrendLabel(current: Double, baseline: Double) -> PortfolioMetricTrend {
+        let safeBaseline = baseline == 0 ? 1 : baseline
+        let percent = ((current - baseline) / safeBaseline) * 100.0
+        let isPositive = percent >= 0
+        let symbol = isPositive ? "arrow.up.right" : "arrow.down.right"
+        let formattedPercent = String(format: "%+.1f%% this month", percent)
+        return PortfolioMetricTrend(symbol: symbol, text: formattedPercent, isPositive: isPositive)
     }
 
     private var summaryDivider: some View {
@@ -324,6 +475,28 @@ struct PortfolioView: View {
         .padding(.horizontal, 20)
     }
 
+    private var fabAddButton: some View {
+        Button {
+            presentAddPropertyFlow()
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 22, weight: .heavy))
+                .foregroundStyle(Color.richBlack)
+                .frame(width: 58, height: 58)
+                .background(
+                    Circle()
+                        .fill(Color.primaryYellow)
+                )
+                .shadow(color: Color.black.opacity(0.24), radius: 14, x: 0, y: 10)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add property")
+    }
+
+    private func cardHeroID(for property: Property) -> String {
+        property.id ?? property.address
+    }
+
     private func triggerDeleteHaptic() {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.warning)
@@ -392,18 +565,27 @@ struct PortfolioView: View {
 struct PortfolioMetricTile: View {
     let title: String
     let value: String
+    let trend: PortfolioMetricTrend
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             Text(title)
                 .font(.system(.caption2, design: .rounded).weight(.semibold))
                 .foregroundStyle(Color.richBlack.opacity(0.6))
             Text(value)
                 .font(.system(.subheadline, design: .rounded).weight(.bold))
                 .foregroundStyle(Color.richBlack)
+            HStack(spacing: 4) {
+                Image(systemName: trend.symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(trend.isPositive ? Color.green : Color.red)
+                Text(trend.text)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle((trend.isPositive ? Color.green : Color.red).opacity(0.85))
+            }
         }
         .fixedSize(horizontal: true, vertical: false)
-        .frame(height: 44, alignment: .leading)
+        .frame(height: 62, alignment: .leading)
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -419,6 +601,24 @@ struct PortfolioMetrics {
     let propertyCount: Int
     let totalDoors: Int
     let totalValue: Double
+}
+
+struct PortfolioMetricTrend {
+    let symbol: String
+    let text: String
+    let isPositive: Bool
+}
+
+struct PortfolioMetricTrends {
+    let properties: PortfolioMetricTrend
+    let doors: PortfolioMetricTrend
+    let value: PortfolioMetricTrend
+}
+
+enum PortfolioSortOption {
+    case roi
+    case cashFlow
+    case recency
 }
 
 struct CashFlowHealth {

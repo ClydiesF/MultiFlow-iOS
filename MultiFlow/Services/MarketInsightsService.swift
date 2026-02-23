@@ -30,6 +30,8 @@ struct MarketInsightsService {
         static let shared = MarketInsightsCacheStore()
         private let storageKey = "market_insights_cache_v1"
         private let rentAVMStorageKey = "market_rent_avm_cache_v1"
+        private let maxInsightsEntries = 80
+        private let maxRentAVMEntries = 120
         private var cache: [String: CachedInsightEntry] = [:]
         private var rentAVMCache: [String: CachedRentAVMEntry] = [:]
 
@@ -56,6 +58,7 @@ struct MarketInsightsService {
 
         func save(_ snapshot: MarketInsightSnapshot, for key: String) {
             cache[key] = CachedInsightEntry(snapshot: snapshot, fetchedAt: Date())
+            trimInsightsIfNeeded()
             persist()
         }
 
@@ -65,7 +68,24 @@ struct MarketInsightsService {
 
         func saveRentAVM(_ snapshot: RentalMarketAVMSnapshot, for key: String) {
             rentAVMCache[key] = CachedRentAVMEntry(snapshot: snapshot, fetchedAt: Date())
+            trimRentAVMIfNeeded()
             persist()
+        }
+
+        private func trimInsightsIfNeeded() {
+            guard cache.count > maxInsightsEntries else { return }
+            let keep = cache
+                .sorted { $0.value.fetchedAt > $1.value.fetchedAt }
+                .prefix(maxInsightsEntries)
+            cache = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+        }
+
+        private func trimRentAVMIfNeeded() {
+            guard rentAVMCache.count > maxRentAVMEntries else { return }
+            let keep = rentAVMCache
+                .sorted { $0.value.fetchedAt > $1.value.fetchedAt }
+                .prefix(maxRentAVMEntries)
+            rentAVMCache = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
         }
 
         private func persist() {
@@ -74,6 +94,16 @@ struct MarketInsightsService {
             guard let rentData = try? JSONEncoder().encode(rentAVMCache) else { return }
             UserDefaults.standard.set(rentData, forKey: rentAVMStorageKey)
         }
+    }
+
+    private let client: SupabaseClient
+
+    init(client: SupabaseClient) {
+        self.client = client
+    }
+
+    init() {
+        self.client = SupabaseManager.shared.client
     }
 
     enum InsightError: LocalizedError {
@@ -207,7 +237,7 @@ struct MarketInsightsService {
 
     private func invokeRentcastProxy(endpoint: String, params: [String: String]) async throws -> [String: Any] {
         let config = BackendConfig.load()
-        guard let token = SupabaseManager.shared.client.auth.currentSession?.accessToken else {
+        guard let token = client.auth.currentSession?.accessToken else {
             throw InsightError.invalidResponse
         }
 

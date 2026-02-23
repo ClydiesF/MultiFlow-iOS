@@ -14,6 +14,8 @@ struct PropertyDetailView: View {
     @AppStorage("defaultClosingCostRate") private var defaultClosingCostRate = 3.0
     @Environment(\.dismiss) private var dismiss
     let property: Property
+    var cardHeroNamespace: Namespace.ID? = nil
+    var cardHeroID: String? = nil
 
     @State private var shareURL: URL?
     @State private var showShare = false
@@ -82,37 +84,15 @@ struct PropertyDetailView: View {
     @State private var rentAVMSnapshot: MarketInsightsService.RentalMarketAVMSnapshot?
     @State private var showDeepDive = false
     @State private var persistedPropertySnapshot: Property?
+    @State private var maoDesiredProfitPercent = 12.0
+    @State private var maoFixedCostPercent = 2.0
+    @State private var maoSellingCostPercent = 8.0
 
     private let marketInsightsService = MarketInsightsService()
+    private let enableMarketInsightsUI = true
 
     var body: some View {
-        ZStack {
-            CanvasBackground()
-
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 20) {
-                    header
-                    propertyBasicsSection
-                    if shouldShowCompleteAnalysisSection {
-                        completeAnalysisSection
-                    }
-                    ownershipSection
-                    mediaActionChipsRow
-                    summarySection
-                    pillarsSection
-                    taxAssumptionsSection
-                    mortgageSection
-                    cashToCloseSection
-                    if isEditingAnalysis {
-                        analysisEditSection
-                    }
-                    operatingExpenseSection
-                    marketInsightsSection
-                    rentRollSection
-                }
-                .padding(24)
-            }
-        }
+        rootWithHero
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -235,7 +215,9 @@ struct PropertyDetailView: View {
             syncInlineRentRollInputs(from: activeProperty)
             syncTaxAssumptionsInputs(from: activeProperty)
             isOwnedToggle = activeProperty.isOwned == true
-            Task { await loadMarketInsightsIfNeeded() }
+            if enableMarketInsightsUI {
+                Task { await loadMarketInsightsIfNeeded() }
+            }
         }
         .onChange(of: selectedPhotoItem) { _, newItem in
             guard let newItem else { return }
@@ -311,52 +293,66 @@ struct PropertyDetailView: View {
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(activeProperty.address)
-                .font(.system(size: 32, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.richBlack)
+    private var rootWithHero: AnyView {
+        if let cardHeroNamespace, let cardHeroID {
+            return AnyView(
+                detailRoot
+                    .matchedGeometryEffect(id: cardHeroID, in: cardHeroNamespace)
+            )
+        } else {
+            return AnyView(detailRoot)
+        }
+    }
 
-            Text(Formatters.currency.string(from: NSNumber(value: activeProperty.purchasePrice)) ?? "$0")
-                .font(.system(.title2, design: .rounded).weight(.bold))
-                .foregroundStyle(Color.richBlack.opacity(0.86))
+    private var detailRoot: some View {
+        ZStack {
+            CanvasBackground()
 
-            HStack(spacing: 12) {
-                GradeBadge(grade: weightedGrade, accentColor: Color(hex: activeProfile.colorHex))
-                profilePill
-                UnitTypeBadge(unitCount: effectiveUnitCount)
-                if activeProperty.isProvisionalEstimate {
-                    Text("Estimate")
-                        .font(.system(.caption, design: .rounded).weight(.bold))
-                        .foregroundStyle(Color.richBlack)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.primaryYellow.opacity(0.9))
-                        )
+            VStack(spacing: 0) {
+                commandHeader
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                    .padding(.bottom, 10)
+
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 20) {
+                        propertyBasicsSection.erasedToAnyView()
+                        if shouldShowCompleteAnalysisSection {
+                            completeAnalysisSection.erasedToAnyView()
+                        }
+                        ownershipSection.erasedToAnyView()
+                        mediaActionChipsRow.erasedToAnyView()
+                        summarySection.erasedToAnyView()
+                        maximumAllowableOfferSection.erasedToAnyView()
+                        pillarsSection.erasedToAnyView()
+                        taxAssumptionsSection.erasedToAnyView()
+                        mortgageSection.erasedToAnyView()
+                        cashToCloseSection.erasedToAnyView()
+                        if isEditingAnalysis {
+                            analysisEditSection.erasedToAnyView()
+                        }
+                        operatingExpenseSection.erasedToAnyView()
+                        if enableMarketInsightsUI {
+                            marketInsightsSection.erasedToAnyView()
+                        }
+                        rentRollSection.erasedToAnyView()
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
                 }
             }
-
-            HStack(spacing: 10) {
-                Capsule()
-                    .fill(Color.primaryYellow)
-                    .frame(width: 36, height: 6)
-                let bedsText = Formatters.bedsBaths.string(from: NSNumber(value: totalBeds)) ?? "\(totalBeds)"
-                let bathsText = Formatters.bedsBaths.string(from: NSNumber(value: totalBaths)) ?? "\(totalBaths)"
-                Text("\(effectiveUnitCount) units • \(bedsText) Beds • \(bathsText) Baths")
-                    .font(.system(.footnote, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Color.richBlack.opacity(0.6))
-            }
-
-            if let city = activeProperty.city, let state = activeProperty.state, let zip = activeProperty.zipCode,
-               !city.isEmpty, !state.isEmpty, !zip.isEmpty {
-                Text("\(city), \(state) \(zip)")
-                    .font(.system(.subheadline, design: .rounded).weight(.medium))
-                    .foregroundStyle(Color.richBlack.opacity(0.6))
-            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var commandHeader: some View {
+        PropertyCommandHeaderView(
+            address: activeProperty.address,
+            grade: weightedGrade,
+            monthlyCashFlow: (analysisMetrics?.annualCashFlow ?? 0) / 12.0,
+            profileName: activeProfile.name,
+            profileColorHex: activeProfile.colorHex,
+            unitCount: effectiveUnitCount
+        )
     }
 
     private var mediaActionChipsRow: some View {
@@ -936,9 +932,7 @@ struct PropertyDetailView: View {
             }
 
             if let metrics = analysisMetrics {
-                SummaryMetricsGrid(metrics: metrics) { metric in
-                    infoMetric = metric
-                }
+                summaryMetricsRows(metrics)
             } else {
                 Text("Add financing inputs to show NOI, cash flow, cap rate, cash-on-cash, and DCR.")
                     .font(.system(.footnote, design: .rounded))
@@ -946,6 +940,114 @@ struct PropertyDetailView: View {
             }
         }
         .cardStyle()
+    }
+
+    private var maximumAllowableOfferSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Maximum Allowable Offer")
+                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Text("MAO = ARV - Rehab - Fixed - Selling - Desired Profit")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Color.richBlack.opacity(0.62))
+                    Capsule(style: .continuous)
+                        .fill(Color.primaryYellow)
+                        .frame(width: 52, height: 5)
+                }
+                Spacer()
+            }
+
+            HStack(spacing: 10) {
+                summaryTileContent(
+                    title: "MAO",
+                    value: Formatters.currency.string(from: NSNumber(value: maximumAllowableOfferValue)) ?? "$0",
+                    showsInfo: false
+                )
+                summaryMetricButton(
+                    title: "ARV",
+                    value: Formatters.currency.string(from: NSNumber(value: maximumAllowableOfferARV)) ?? "$0",
+                    info: .arv
+                )
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Desired Profit")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Spacer()
+                    Text("\(Int(maoDesiredProfitPercent))%")
+                        .font(.system(.caption, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.richBlack.opacity(0.72))
+                }
+
+                Slider(value: $maoDesiredProfitPercent, in: 5...30, step: 1)
+                    .tint(Color.primaryYellow)
+
+                Text(Formatters.currency.string(from: NSNumber(value: maximumAllowableDesiredProfit)) ?? "$0")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.66))
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Fixed Costs")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Spacer()
+                    Text("\(Int(maoFixedCostPercent))%")
+                        .font(.system(.caption, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.richBlack.opacity(0.72))
+                }
+
+                Slider(value: $maoFixedCostPercent, in: 0...12, step: 0.5)
+                    .tint(Color.primaryYellow)
+
+                Text(Formatters.currency.string(from: NSNumber(value: maximumAllowableFixedCosts)) ?? "$0")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.66))
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Selling Costs")
+                        .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Color.richBlack)
+                    Spacer()
+                    Text("\(Int(maoSellingCostPercent))%")
+                        .font(.system(.caption, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.richBlack.opacity(0.72))
+                }
+
+                Slider(value: $maoSellingCostPercent, in: 0...15, step: 0.5)
+                    .tint(Color.primaryYellow)
+
+                Text(Formatters.currency.string(from: NSNumber(value: maximumAllowableSellingCosts)) ?? "$0")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.richBlack.opacity(0.66))
+            }
+
+            VStack(spacing: 8) {
+                maoBreakdownRow(title: "Rehab Costs", amount: maximumAllowableRehabCosts)
+                maoBreakdownRow(title: "Fixed Costs", amount: maximumAllowableFixedCosts)
+                maoBreakdownRow(title: "Selling Costs", amount: maximumAllowableSellingCosts)
+            }
+        }
+        .cardStyle()
+    }
+
+    private func maoBreakdownRow(title: String, amount: Double) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack.opacity(0.62))
+            Spacer()
+            Text("-\(Formatters.currency.string(from: NSNumber(value: amount)) ?? "$0")")
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .foregroundStyle(Color.richBlack.opacity(0.82))
+        }
     }
 
     private func summaryTileContent(title: String, value: String, showsInfo: Bool) -> some View {
@@ -974,6 +1076,58 @@ struct PropertyDetailView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.primaryYellow.opacity(0.75), lineWidth: 1)
         )
+    }
+
+    private func summaryMetricsRows(_ metrics: DealMetrics) -> some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                summaryMetricButton(
+                    title: "NOI",
+                    value: Formatters.currency.string(from: NSNumber(value: metrics.netOperatingIncome)) ?? "$0",
+                    info: .netOperatingIncome
+                )
+                summaryMetricButton(
+                    title: "Monthly Cash Flow",
+                    value: Formatters.currency.string(from: NSNumber(value: metrics.annualCashFlow / 12.0)) ?? "$0",
+                    info: .cashFlow
+                )
+            }
+
+            HStack(spacing: 12) {
+                summaryTileContent(
+                    title: "Annual Cash Flow",
+                    value: Formatters.currency.string(from: NSNumber(value: metrics.annualCashFlow)) ?? "$0",
+                    showsInfo: false
+                )
+                summaryMetricButton(
+                    title: "Cap Rate",
+                    value: Formatters.percent.string(from: NSNumber(value: metrics.capRate)) ?? "0%",
+                    info: .capRate
+                )
+            }
+
+            HStack(spacing: 12) {
+                summaryMetricButton(
+                    title: "Cash-on-Cash",
+                    value: Formatters.percent.string(from: NSNumber(value: metrics.cashOnCash)) ?? "0%",
+                    info: .cashOnCash
+                )
+                summaryMetricButton(
+                    title: "DCR",
+                    value: String(format: "%.2f", metrics.debtCoverageRatio),
+                    info: .dcr
+                )
+            }
+        }
+    }
+
+    private func summaryMetricButton(title: String, value: String, info: MetricInfoType) -> some View {
+        Button {
+            infoMetric = info
+        } label: {
+            summaryTileContent(title: title, value: value, showsInfo: true)
+        }
+        .buttonStyle(.plain)
     }
 
     private var completeAnalysisSection: some View {
@@ -1086,7 +1240,7 @@ struct PropertyDetailView: View {
                 Picker("Grade Profile", selection: $selectedProfileId) {
                     let defaultName = gradeProfileStore.profiles.first(where: { $0.id == gradeProfileStore.defaultProfileId })?.name ?? "Default"
                     Text("Default (\(defaultName))").tag(Optional<String>.none)
-                    ForEach(gradeProfileStore.profiles, id: \.id) { profile in
+                    ForEach(Array(gradeProfileStore.profiles.enumerated()), id: \.offset) { _, profile in
                         Text(profile.name).tag(profile.id)
                     }
                 }
@@ -1186,7 +1340,7 @@ struct PropertyDetailView: View {
             return
         }
 
-        let image = await ImageLoader.loadImage(from: activeProperty.imageURL)
+        let image = await ImageLoader.loadImage(from: activeProperty.imageURL, maxPixelSize: 1600)
 
         do {
             let profile = gradeProfileStore.effectiveProfile(for: activeProperty)
@@ -2022,6 +2176,36 @@ struct PropertyDetailView: View {
         return persistedProperty
     }
 
+    private var maximumAllowableOfferARV: Double {
+        max(liveDisplayProperty.purchasePrice, 0)
+    }
+
+    private var maximumAllowableRehabCosts: Double {
+        max(liveDisplayProperty.renoBudget ?? 0, 0)
+    }
+
+    private var maximumAllowableFixedCosts: Double {
+        maximumAllowableOfferARV * (maoFixedCostPercent / 100.0)
+    }
+
+    private var maximumAllowableSellingCosts: Double {
+        maximumAllowableOfferARV * (maoSellingCostPercent / 100.0)
+    }
+
+    private var maximumAllowableDesiredProfit: Double {
+        maximumAllowableOfferARV * (maoDesiredProfitPercent / 100.0)
+    }
+
+    private var maximumAllowableOfferValue: Double {
+        MFMetricEngine.maximumAllowableOffer(
+            arv: maximumAllowableOfferARV,
+            rehabCosts: maximumAllowableRehabCosts,
+            fixedCosts: maximumAllowableFixedCosts,
+            sellingCosts: maximumAllowableSellingCosts,
+            desiredProfit: maximumAllowableDesiredProfit
+        )
+    }
+
     private var persistedProperty: Property {
         persistedPropertySnapshot ?? property
     }
@@ -2069,7 +2253,7 @@ struct PropertyDetailView: View {
     private var profilePill: some View {
         Menu {
             Button("Default") { Task { await applyProfile(nil) } }
-            ForEach(gradeProfileStore.profiles, id: \.id) { profile in
+            ForEach(Array(gradeProfileStore.profiles.enumerated()), id: \.offset) { _, profile in
                 Button(profile.name) { Task { await applyProfile(profile.id) } }
             }
         } label: {
@@ -2406,6 +2590,12 @@ struct PropertyDetailView: View {
     }
 }
 
+private extension View {
+    func erasedToAnyView() -> AnyView {
+        AnyView(self)
+    }
+}
+
 private struct CapexItemInput: Identifiable {
     let id = UUID()
     var name: String
@@ -2498,6 +2688,71 @@ private struct SummaryMetricsGrid: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.primaryYellow.opacity(0.75), lineWidth: 1)
         )
+    }
+}
+
+private struct PropertyCommandHeaderView: View {
+    let address: String
+    let grade: Grade
+    let monthlyCashFlow: Double
+    let profileName: String
+    let profileColorHex: String
+    let unitCount: Int
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(address)
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .foregroundStyle(Color.richBlack)
+                    .lineLimit(2)
+
+                Text("Monthly Cash Flow \(Formatters.currency.string(from: NSNumber(value: monthlyCashFlow)) ?? "$0")")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(monthlyCashFlow >= 0 ? Color.green.opacity(0.9) : Color.red.opacity(0.9))
+
+                HStack(spacing: 8) {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(Color(hex: profileColorHex))
+                            .frame(width: 7, height: 7)
+                        Text(profileName)
+                            .lineLimit(1)
+                    }
+                    .font(.system(.caption2, design: .rounded).weight(.bold))
+                    .foregroundStyle(Color.white.opacity(0.95))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.richBlack.opacity(0.65))
+                    )
+
+                    UnitTypeBadge(unitCount: unitCount)
+                }
+            }
+
+            Spacer()
+
+            ZStack {
+                Circle()
+                    .fill(Color.primaryYellow.opacity(0.22))
+                    .frame(width: 52, height: 52)
+                    .blur(radius: 8)
+                GradeCircleView(grade: grade)
+                    .frame(width: 44, height: 44)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.cardSurface.opacity(0.98))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.primaryYellow.opacity(0.20), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 5)
     }
 }
 

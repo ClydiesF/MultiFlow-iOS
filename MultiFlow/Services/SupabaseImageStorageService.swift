@@ -23,8 +23,12 @@ struct SupabaseImageStorageService: ImageStorageServiceProtocol {
     private let client: SupabaseClient
     private let bucket = "property-images"
 
-    init(client: SupabaseClient = SupabaseManager.shared.client) {
+    init(client: SupabaseClient) {
         self.client = client
+    }
+
+    init() {
+        self.init(client: SupabaseManager.shared.client)
     }
 
     func uploadPropertyImage(_ image: UIImage, userId: String, propertyId: String?) async throws -> UploadedImage {

@@ -7,6 +7,7 @@ struct RentUnit: Identifiable, Codable, Hashable {
     var bedrooms: Double
     var bathrooms: Double
     var squareFeet: Double?
+    var isLeased: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -15,6 +16,7 @@ struct RentUnit: Identifiable, Codable, Hashable {
         case bedrooms
         case bathrooms
         case squareFeet = "square_feet"
+        case isLeased = "is_leased"
     }
 
     init(
@@ -23,7 +25,8 @@ struct RentUnit: Identifiable, Codable, Hashable {
         unitType: String,
         bedrooms: Double,
         bathrooms: Double,
-        squareFeet: Double? = nil
+        squareFeet: Double? = nil,
+        isLeased: Bool? = nil
     ) {
         self.id = id
         self.monthlyRent = monthlyRent
@@ -31,5 +34,6 @@ struct RentUnit: Identifiable, Codable, Hashable {
         self.bedrooms = bedrooms
         self.bathrooms = bathrooms
         self.squareFeet = squareFeet
+        self.isLeased = isLeased
     }
 }

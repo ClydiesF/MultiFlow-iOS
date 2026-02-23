@@ -3,6 +3,17 @@ import Foundation
 enum GlossaryCatalog {
     static let allTerms: [GlossaryTerm] = [
         GlossaryTerm(
+            id: "arv",
+            title: "After Repair Value (ARV)",
+            aliases: ["ARV", "After Repair Value", "After-Repair Value"],
+            category: .coreMetrics,
+            definition: "ARV is the estimated value of a property after renovations and improvements are completed.",
+            whyItMatters: "ARV is a core anchor for acquisition strategy because it helps set offer price, renovation budget tolerance, and target profit.",
+            formula: "MAO = ARV - Rehab Costs - Fixed Costs - Selling Costs - Desired Profit",
+            iconSystemName: "hammer.circle",
+            relatedMetrics: [.arv]
+        ),
+        GlossaryTerm(
             id: "noi",
             title: "Net Operating Income (NOI)",
             aliases: ["NOI", "Net Income"],

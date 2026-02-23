@@ -179,7 +179,7 @@ final class SubscriptionManager: NSObject, ObservableObject, PurchasesDelegate {
         let apiKey = (Bundle.main.object(forInfoDictionaryKey: "REVENUECAT_API_KEY") as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
 #if DEBUG
-        let resolvedKey = (apiKey?.isEmpty == false) ? apiKey! : "test_tLWwpGYldPETCFplXsTRbTxdlOI"
+        let resolvedKey = "test_tLWwpGYldPETCFplXsTRbTxdlOI"
 #else
         let resolvedKey = apiKey ?? ""
 #endif
@@ -233,14 +233,27 @@ final class SubscriptionManager: NSObject, ObservableObject, PurchasesDelegate {
         guard configured else { return }
         isLoadingOfferings = true
         defer { isLoadingOfferings = false }
+        lastErrorMessage = nil
 
         do {
             let offerings = try await Purchases.shared.offerings()
-            let offering = offerings.current
-            currentOffering = offering
-            availablePackages = offering?.availablePackages ?? []
+            let resolvedOffering = resolveOffering(from: offerings)
+            currentOffering = resolvedOffering
+
+            if let resolvedOffering {
+                availablePackages = resolvedOffering.availablePackages
+            } else {
+                availablePackages = offerings.all.values.flatMap(\.availablePackages)
+            }
+
+            if availablePackages.isEmpty {
+                let availableOfferingIDs = offerings.all.keys.sorted().joined(separator: ", ")
+                lastErrorMessage = availableOfferingIDs.isEmpty
+                    ? "No subscription products are configured in RevenueCat for this app."
+                    : "No packages found in offerings (\(availableOfferingIDs)). Set a current offering and add monthly/annual packages."
+            }
         } catch {
-            lastErrorMessage = "Unable to load subscription options."
+            lastErrorMessage = "Unable to load subscription options. \(error.localizedDescription)"
         }
     }
 
@@ -343,10 +356,37 @@ final class SubscriptionManager: NSObject, ObservableObject, PurchasesDelegate {
 
     private func package(matchingAnyIdentifier identifiers: [String]) -> Package? {
         let normalized = Set(identifiers.map { $0.lowercased() })
-        return availablePackages.first { pkg in
+        if let match = availablePackages.first(where: { pkg in
             normalized.contains(pkg.identifier.lowercased()) ||
             normalized.contains(pkg.storeProduct.productIdentifier.lowercased())
+        }) {
+            return match
         }
+
+        // Fallback for projects that use custom package IDs.
+        switch selectedPlan {
+        case .monthly:
+            return availablePackages.first { pkg in
+                let id = pkg.identifier.lowercased()
+                let productID = pkg.storeProduct.productIdentifier.lowercased()
+                return id.contains("month") || productID.contains("month")
+            }
+        case .annual:
+            return availablePackages.first { pkg in
+                let id = pkg.identifier.lowercased()
+                let productID = pkg.storeProduct.productIdentifier.lowercased()
+                return id.contains("year") || id.contains("annual")
+                || productID.contains("year") || productID.contains("annual")
+            }
+        }
+    }
+
+    private func resolveOffering(from offerings: Offerings) -> Offering? {
+        if let current = offerings.current, !current.availablePackages.isEmpty {
+            return current
+        }
+
+        return offerings.all.values.first(where: { !$0.availablePackages.isEmpty })
     }
 
     private func applyCustomerInfo(_ info: CustomerInfo) {

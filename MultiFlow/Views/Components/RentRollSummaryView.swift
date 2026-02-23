@@ -36,11 +36,11 @@ struct RentRollSummaryView: View {
             HStack(spacing: 8) {
                 summaryPill(
                     title: "Monthly",
-                    value: Formatters.currencyTwo.string(from: NSNumber(value: monthlyTotal)) ?? "$0"
+                    value: Formatters.currency.string(from: NSNumber(value: monthlyTotal)) ?? "$0"
                 )
                 summaryPill(
                     title: "Annual",
-                    value: Formatters.currencyTwo.string(from: NSNumber(value: annualTotal)) ?? "$0"
+                    value: Formatters.currency.string(from: NSNumber(value: annualTotal)) ?? "$0"
                 )
                 summaryPill(
                     title: "Beds",

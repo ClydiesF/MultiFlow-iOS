@@ -46,14 +46,13 @@ struct EditPropertySheet: View {
                             .foregroundStyle(Color.richBlack)
 
                         ZStack {
-                            if let url = URL(string: imageURL), !imageURL.isEmpty {
-                                AsyncImage(url: url) { phase in
-                                    switch phase {
-                                    case .success(let image):
-                                        image.resizable().scaledToFill()
-                                    default:
-                                        Color.softGray
-                                    }
+                            if !imageURL.isEmpty {
+                                DownsampledRemoteImageView(
+                                    urlString: imageURL,
+                                    maxPixelSize: 1280,
+                                    contentMode: .fill
+                                ) {
+                                    Color.softGray
                                 }
                             } else {
                                 VStack(spacing: 6) {

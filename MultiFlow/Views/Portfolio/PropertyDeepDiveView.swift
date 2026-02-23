@@ -591,6 +591,8 @@ struct PropertyDeepDiveView: View {
 }
 
 private struct PropertyRecordsService {
+    private let client: SupabaseClient = SupabaseManager.shared.client
+
     private struct CachedRecordEntry: Codable, Sendable {
         let data: IntelligenceScanData
         let fetchedAt: Date
@@ -599,6 +601,7 @@ private struct PropertyRecordsService {
     private actor PropertyRecordCacheStore {
         static let shared = PropertyRecordCacheStore()
         private let storageKey = "property_deep_dive_records_cache_v2"
+        private let maxEntries = 60
         private var cache: [String: CachedRecordEntry] = [:]
 
         init() {
@@ -614,7 +617,16 @@ private struct PropertyRecordsService {
 
         func save(_ data: IntelligenceScanData, for key: String) {
             cache[key] = CachedRecordEntry(data: data, fetchedAt: Date())
+            trimIfNeeded()
             persist()
+        }
+
+        private func trimIfNeeded() {
+            guard cache.count > maxEntries else { return }
+            let keep = cache
+                .sorted { $0.value.fetchedAt > $1.value.fetchedAt }
+                .prefix(maxEntries)
+            cache = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
         }
 
         private func persist() {
@@ -755,7 +767,7 @@ private struct PropertyRecordsService {
 
     private func invokeRentcastProxy(endpoint: String, params: [String: String]) async throws -> [String: Any] {
         let config = BackendConfig.load()
-        guard let token = SupabaseManager.shared.client.auth.currentSession?.accessToken else {
+        guard let token = client.auth.currentSession?.accessToken else {
             throw PropertyRecordsError.invalidResponse
         }
 
