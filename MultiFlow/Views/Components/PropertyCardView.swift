@@ -9,6 +9,11 @@ struct PropertyCardView: View {
     var heroNamespace: Namespace.ID? = nil
     var heroID: String? = nil
 
+    private struct CardAnalytics {
+        let monthlyCashFlow: Double
+        let grade: Grade
+    }
+
     var body: some View {
         Group {
             if let heroNamespace, let heroID {
@@ -33,7 +38,8 @@ struct PropertyCardView: View {
     }
 
     private var frontCard: some View {
-        VStack(spacing: 0) {
+        let analytics = cardAnalytics
+        return VStack(spacing: 0) {
             if hasPropertyImage {
                 ZStack(alignment: .topTrailing) {
                     DownsampledRemoteImageView(
@@ -61,7 +67,7 @@ struct PropertyCardView: View {
                     )
 
                     VStack(alignment: .trailing, spacing: 6) {
-                        gradeBadge
+                        gradeBadge(analytics.grade)
                         if shouldShowMarketAlert {
                             marketAlertBadge
                         }
@@ -82,7 +88,7 @@ struct PropertyCardView: View {
                         statusChips
                         Spacer()
                         VStack(alignment: .trailing, spacing: 6) {
-                            gradeBadge
+                            gradeBadge(analytics.grade)
                             if shouldShowMarketAlert {
                                 marketAlertBadge
                             }
@@ -120,9 +126,9 @@ struct PropertyCardView: View {
                         Text("Monthly Cash Flow")
                             .font(.system(.caption, design: .rounded).weight(.semibold))
                             .foregroundStyle(Color.richBlack.opacity(0.55))
-                        Text(currencyString(monthlyCashFlow))
+                        Text(currencyString(analytics.monthlyCashFlow))
                             .font(.system(size: 18, weight: .bold, design: .rounded))
-                            .foregroundStyle(monthlyCashFlow >= 0 ? Color.green.opacity(0.9) : Color.red.opacity(0.9))
+                            .foregroundStyle(analytics.monthlyCashFlow >= 0 ? Color.green.opacity(0.9) : Color.red.opacity(0.9))
                     }
                 }
             }
@@ -161,8 +167,8 @@ struct PropertyCardView: View {
         )
     }
 
-    private var gradeBadge: some View {
-        GradeCircleView(grade: currentGrade)
+    private func gradeBadge(_ grade: Grade) -> some View {
+        GradeCircleView(grade: grade)
             .frame(width: 42, height: 42)
             .scaleEffect(0.7)
     }
@@ -298,11 +304,6 @@ struct PropertyCardView: View {
         )
     }
 
-    private var monthlyCashFlow: Double {
-        guard let metrics = MetricsEngine.computeMetrics(property: property) else { return 0 }
-        return metrics.annualCashFlow / 12.0
-    }
-
     private var averageCurrentRent: Double {
         guard !property.rentRoll.isEmpty else { return 0 }
         let total = property.rentRoll.reduce(0) { $0 + $1.monthlyRent }
@@ -327,9 +328,13 @@ struct PropertyCardView: View {
         min(leasedDoorCount, 4)
     }
 
-    private var currentGrade: Grade {
-        guard let metrics = MetricsEngine.computeMetrics(property: property),
-              let downPayment = property.downPaymentPercent,
+    private var cardAnalytics: CardAnalytics {
+        guard let metrics = MetricsEngine.computeMetrics(property: property) else {
+            return CardAnalytics(monthlyCashFlow: 0, grade: .dOrF)
+        }
+
+        let monthlyCashFlow = metrics.annualCashFlow / 12.0
+        guard let downPayment = property.downPaymentPercent,
               let interestRate = property.interestRate,
               let breakdown = MetricsEngine.mortgageBreakdown(
                 purchasePrice: property.purchasePrice,
@@ -339,11 +344,11 @@ struct PropertyCardView: View {
                 annualTaxes: property.annualTaxes ?? (property.annualTaxesInsurance ?? 0),
                 annualInsurance: property.annualInsurance ?? 0
               ) else {
-            return MetricsEngine.computeMetrics(property: property)?.grade ?? .dOrF
+            return CardAnalytics(monthlyCashFlow: monthlyCashFlow, grade: metrics.grade)
         }
 
         let profile = gradeProfileStore.effectiveProfile(for: property)
-        return MetricsEngine.weightedGrade(
+        let grade = MetricsEngine.weightedGrade(
             metrics: metrics,
             purchasePrice: property.purchasePrice,
             unitCount: max(property.rentRoll.count, 1),
@@ -352,6 +357,7 @@ struct PropertyCardView: View {
             cashflowBreakEvenThreshold: cashflowBreakEvenThreshold,
             profile: profile
         )
+        return CardAnalytics(monthlyCashFlow: monthlyCashFlow, grade: grade)
     }
 
     private var activeProfile: GradeProfile {

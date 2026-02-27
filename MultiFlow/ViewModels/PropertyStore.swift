@@ -9,6 +9,8 @@ final class PropertyStore: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var lastDeletedProperty: Property?
+    private var listeningUserId: String?
+    private var listenTask: Task<Void, Never>?
 
     private let repository: PropertyRepositoryProtocol
     private let client: SupabaseClient
@@ -25,24 +27,38 @@ final class PropertyStore: ObservableObject {
 
     func listen() {
         guard let userId = currentUserId else {
+            listeningUserId = nil
+            listenTask?.cancel()
+            listenTask = nil
+            stopListening()
             properties = []
             return
         }
 
+        // Avoid duplicate fetch + realtime subscriptions for the same user.
+        if listeningUserId == userId {
+            return
+        }
+        listeningUserId = userId
+        listenTask?.cancel()
+
         isLoading = true
         errorMessage = nil
 
-        Task {
+        listenTask = Task {
             do {
+                try Task.checkCancellation()
                 properties = try await repository.fetchProperties(for: userId)
                 isLoading = false
 
+                try Task.checkCancellation()
                 try await repository.startListening(for: userId) { [weak self] in
                     Task { @MainActor in
                         await self?.reload()
                     }
                 }
             } catch {
+                guard !Task.isCancelled else { return }
                 isLoading = false
                 errorMessage = error.localizedDescription
             }
@@ -50,6 +66,9 @@ final class PropertyStore: ObservableObject {
     }
 
     func stopListening() {
+        listenTask?.cancel()
+        listenTask = nil
+        listeningUserId = nil
         Task { await repository.stopListening() }
     }
 

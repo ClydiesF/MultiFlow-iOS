@@ -84,6 +84,7 @@ struct PropertyDetailView: View {
     @State private var rentAVMSnapshot: MarketInsightsService.RentalMarketAVMSnapshot?
     @State private var showDeepDive = false
     @State private var persistedPropertySnapshot: Property?
+    @State private var marketInsightLoadKey: String?
     @State private var maoDesiredProfitPercent = 12.0
     @State private var maoFixedCostPercent = 2.0
     @State private var maoSellingCostPercent = 8.0
@@ -216,7 +217,16 @@ struct PropertyDetailView: View {
             syncTaxAssumptionsInputs(from: activeProperty)
             isOwnedToggle = activeProperty.isOwned == true
             if enableMarketInsightsUI {
-                Task { await loadMarketInsightsIfNeeded() }
+                let nextKey = [
+                    activeProperty.zipCode ?? "",
+                    activeProperty.city ?? "",
+                    activeProperty.state ?? "",
+                    activeProperty.address
+                ].joined(separator: "|").lowercased()
+                if marketInsightLoadKey != nextKey {
+                    marketInsightLoadKey = nextKey
+                    Task { await loadMarketInsightsIfNeeded() }
+                }
             }
         }
         .onChange(of: selectedPhotoItem) { _, newItem in

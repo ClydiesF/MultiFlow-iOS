@@ -26,10 +26,20 @@ final class SupabasePropertyRepository: PropertyRepositoryProtocol {
             .value
 
         var items = rows.map { $0.toModel() }
-        for index in items.indices {
-            if let path = items[index].imagePath,
-               let url = try? await imageStorage.signedURL(for: path) {
-                items[index].imageURL = url.absoluteString
+        let imageStorage = self.imageStorage
+
+        await withTaskGroup(of: (Int, String?).self) { group in
+            for (index, item) in items.enumerated() {
+                guard let path = item.imagePath else { continue }
+                group.addTask {
+                    let signedURL = try? await imageStorage.signedURL(for: path)
+                    return (index, signedURL?.absoluteString)
+                }
+            }
+
+            for await (index, signedURL) in group {
+                guard let signedURL else { continue }
+                items[index].imageURL = signedURL
             }
         }
         return items

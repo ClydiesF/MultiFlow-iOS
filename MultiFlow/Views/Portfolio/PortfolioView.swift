@@ -301,17 +301,25 @@ struct PortfolioView: View {
         case .recency:
             return base
         case .cashFlow:
-            return base.sorted { lhs, rhs in
-                let left = MetricsEngine.computeMetrics(property: lhs)?.annualCashFlow ?? 0
-                let right = MetricsEngine.computeMetrics(property: rhs)?.annualCashFlow ?? 0
-                return left > right
+            let scored = base.map { property in
+                (
+                    property: property,
+                    annualCashFlow: MetricsEngine.computeMetrics(property: property)?.annualCashFlow ?? 0
+                )
             }
+            return scored
+                .sorted { $0.annualCashFlow > $1.annualCashFlow }
+                .map(\.property)
         case .roi:
-            return base.sorted { lhs, rhs in
-                let left = MetricsEngine.computeMetrics(property: lhs)?.cashOnCash ?? 0
-                let right = MetricsEngine.computeMetrics(property: rhs)?.cashOnCash ?? 0
-                return left > right
+            let scored = base.map { property in
+                (
+                    property: property,
+                    cashOnCash: MetricsEngine.computeMetrics(property: property)?.cashOnCash ?? 0
+                )
             }
+            return scored
+                .sorted { $0.cashOnCash > $1.cashOnCash }
+                .map(\.property)
         }
     }
 
