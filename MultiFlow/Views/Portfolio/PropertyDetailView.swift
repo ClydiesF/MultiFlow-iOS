@@ -12,6 +12,8 @@ struct PropertyDetailView: View {
     @AppStorage("cashflowBreakEvenThreshold") private var cashflowBreakEvenThreshold = 500.0
     @AppStorage("defaultMonthlyRentPerUnit") private var defaultMonthlyRentPerUnit = 1500.0
     @AppStorage("defaultClosingCostRate") private var defaultClosingCostRate = 3.0
+    @AppStorage("dashboardSelectedTab") private var dashboardSelectedTab = 0
+    @AppStorage("collaborationFocusPropertyId") private var collaborationFocusPropertyId = ""
     @Environment(\.dismiss) private var dismiss
     let property: Property
     var cardHeroNamespace: Namespace.ID? = nil
@@ -82,6 +84,20 @@ struct PropertyDetailView: View {
     @State private var showMarketInsightPaywall = false
     @State private var marketInsightError: String?
     @State private var rentAVMSnapshot: MarketInsightsService.RentalMarketAVMSnapshot?
+    @StateObject private var scenarioCompareStore = ScenarioCompareStore()
+    @State private var scenarioSort: ScenarioSortOption = .grade
+    @State private var scenarioActionError: String?
+    @State private var didOpenPaywallFromScenario = false
+    @State private var isSavingScenario = false
+    @State private var showScenarioNameSheet = false
+    @State private var pendingScenarioDefaultName = ""
+    @State private var scenarioToDelete: PropertyScenario?
+    @State private var isScenarioCompareExpanded = true
+    @State private var hasTrackedScenarioOpenForPropertyId: String?
+    @StateObject private var offerTrackerStore = OfferTrackerStore()
+    @State private var showOfferDetailSheet = false
+    @State private var offerActionError: String?
+    @State private var didOpenPaywallFromOfferTracker = false
     @State private var showDeepDive = false
     @State private var persistedPropertySnapshot: Property?
     @State private var marketInsightLoadKey: String?
@@ -93,56 +109,45 @@ struct PropertyDetailView: View {
     private let enableMarketInsightsUI = true
 
     var body: some View {
-        rootWithHero
-        .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
+        bodyContent
+    }
+
+    private var bodyContent: some View {
+        var view = AnyView(rootWithHero)
+        view = AnyView(view.navigationTitle("").navigationBarTitleDisplayMode(.inline))
+        view = AnyView(view.toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button(role: .destructive) {
-                    showDeleteConfirm = true
-                } label: {
-                    Image(systemName: "trash")
-                }
+                Button(role: .destructive) { showDeleteConfirm = true } label: { Image(systemName: "trash") }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
-                    showDeepDive = true
+                    openDealRoom()
                 } label: {
-                    Image(systemName: "rectangle.and.text.magnifyingglass")
+                    Image(systemName: "person.2")
                 }
-                .accessibilityLabel("Open deep dive")
+                .accessibilityLabel("Open deal room")
 
-                Button {
-                    Task { await exportPDF() }
-                } label: {
-                    Image(systemName: "square.and.arrow.up")
-                }
-                .disabled(isExporting)
-                .accessibilityLabel("Export deal summary")
+                Button { showDeepDive = true } label: { Image(systemName: "rectangle.and.text.magnifyingglass") }
+                    .accessibilityLabel("Open deep dive")
+                Button { Task { await exportPDF() } } label: { Image(systemName: "square.and.arrow.up") }
+                    .disabled(isExporting)
+                    .accessibilityLabel("Export deal summary")
             }
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("Done") {
-                    dismissKeyboard()
-                }
-                .font(.system(.subheadline, design: .rounded).weight(.bold))
-                .foregroundStyle(Color.primaryYellow)
+                Button("Done") { dismissKeyboard() }
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .foregroundStyle(Color.primaryYellow)
             }
-        }
-        .sheet(isPresented: $showShare) {
-            if let shareURL {
-                ActivityView(activityItems: [shareURL])
-            }
-        }
-        .sheet(item: $infoMetric) { metric in
-            MetricInfoSheet(metric: metric)
-        }
-        .sheet(item: $selectedPillarResult) { result in
-            PillarDetailSheet(result: result)
-                .presentationDetents([.height(pillarSheetHeight(for: result))])
+        })
+        view = AnyView(view.sheet(isPresented: $showShare) { if let shareURL { ActivityView(activityItems: [shareURL]) } })
+        view = AnyView(view.sheet(item: $infoMetric) { MetricInfoSheet(metric: $0) })
+        view = AnyView(view.sheet(item: $selectedPillarResult) {
+            PillarDetailSheet(result: $0)
+                .presentationDetents([.height(pillarSheetHeight(for: $0))])
                 .presentationDragIndicator(.visible)
-        }
-        .fullScreenCover(isPresented: $showingMortgageDetails) {
+        })
+        view = AnyView(view.fullScreenCover(isPresented: $showingMortgageDetails) {
             if mortgageBreakdown != nil {
                 MortgageDetailSheet(
                     purchasePrice: activeProperty.purchasePrice,
@@ -164,12 +169,10 @@ struct PropertyDetailView: View {
                         scenarioProperty.loanTermYears = scenario.termYears
                         return evaluatedMetricsAndGrade(for: scenarioProperty)
                     }
-                ) { scenario in
-                    applyMortgageScenario(scenario)
-                }
+                ) { applyMortgageScenario($0) }
             }
-        }
-        .sheet(isPresented: $showingCashToCloseLab) {
+        })
+        view = AnyView(view.sheet(isPresented: $showingCashToCloseLab) {
             CashToCloseLabSheet(
                 purchasePrice: activeProperty.purchasePrice,
                 baseline: CashToCloseScenarioValues(
@@ -179,25 +182,43 @@ struct PropertyDetailView: View {
                 ),
                 baselineMetrics: MetricsEngine.computeMetrics(property: activeProperty),
                 baselineGrade: weightedGrade(for: activeProperty),
-                evaluateScenario: { scenario in
-                    return evaluateCashToCloseScenario(scenario)
-                }
-            ) { scenario in
-                applyCashToCloseScenario(scenario)
-            }
+                evaluateScenario: { evaluateCashToCloseScenario($0) }
+            ) { applyCashToCloseScenario($0) }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $showCamera) {
-            CameraPicker { image in
-                Task { await uploadDetailImage(image) }
-            }
-        }
-        .sheet(isPresented: $showMarketInsightPaywall) {
-            PaywallView()
-                .environmentObject(subscriptionManager)
-        }
-        .fullScreenCover(isPresented: $showDeepDive) {
+        })
+        view = AnyView(view.sheet(isPresented: $showCamera) {
+            CameraPicker { image in Task { await uploadDetailImage(image) } }
+        })
+        view = AnyView(view.sheet(isPresented: $showMarketInsightPaywall) {
+            PaywallView().environmentObject(subscriptionManager)
+        })
+        view = AnyView(view.sheet(isPresented: $showScenarioNameSheet) {
+            ScenarioNameSheet(
+                name: $pendingScenarioDefaultName,
+                onCancel: { showScenarioNameSheet = false },
+                onSave: { Task { await saveScenario(named: pendingScenarioDefaultName) } }
+            )
+            .presentationDetents([.height(220)])
+            .presentationDragIndicator(.visible)
+        })
+        view = AnyView(view.sheet(isPresented: $showOfferDetailSheet) {
+            OfferDetailSheet(
+                store: offerTrackerStore,
+                property: liveDisplayProperty,
+                isPremium: subscriptionManager.isPremium,
+                onRequireUpgrade: {
+                    didOpenPaywallFromOfferTracker = true
+                    showMarketInsightPaywall = true
+                },
+                onTrackEvent: { event, metadata in
+                    AnalyticsTracker.track(event, metadata: metadata)
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        })
+        view = AnyView(view.fullScreenCover(isPresented: $showDeepDive) {
             NavigationStack {
                 PropertyDeepDiveView(property: activeProperty)
                     .environmentObject(subscriptionManager)
@@ -207,67 +228,80 @@ struct PropertyDetailView: View {
                         }
                     }
             }
-        }
-        .photosPicker(isPresented: $showPhotoLibraryPicker, selection: $selectedPhotoItem, matching: .images)
-        .onAppear {
+        })
+        view = AnyView(view.photosPicker(isPresented: $showPhotoLibraryPicker, selection: $selectedPhotoItem, matching: .images))
+        view = AnyView(view.onAppear {
             syncPersistedSnapshot()
             simpleExpenseRate = String(standardOperatingExpenseRate)
             syncBasicInputs(from: activeProperty)
             syncInlineRentRollInputs(from: activeProperty)
             syncTaxAssumptionsInputs(from: activeProperty)
             isOwnedToggle = activeProperty.isOwned == true
+            offerTrackerStore.setPremium(subscriptionManager.isPremium)
+            bindOfferStore()
+            bindScenarioStore()
             if enableMarketInsightsUI {
-                let nextKey = [
-                    activeProperty.zipCode ?? "",
-                    activeProperty.city ?? "",
-                    activeProperty.state ?? "",
-                    activeProperty.address
-                ].joined(separator: "|").lowercased()
+                let nextKey = [activeProperty.zipCode ?? "", activeProperty.city ?? "", activeProperty.state ?? "", activeProperty.address]
+                    .joined(separator: "|")
+                    .lowercased()
                 if marketInsightLoadKey != nextKey {
                     marketInsightLoadKey = nextKey
                     Task { await loadMarketInsightsIfNeeded() }
                 }
             }
-        }
-        .onChange(of: selectedPhotoItem) { _, newItem in
+        })
+        view = AnyView(view.onChange(of: selectedPhotoItem) { _, newItem in
             guard let newItem else { return }
             Task {
                 if let data = try? await newItem.loadTransferable(type: Data.self),
                    let image = UIImage(data: data) {
                     await uploadDetailImage(image)
                 }
-                await MainActor.run {
-                    selectedPhotoItem = nil
-                }
+                await MainActor.run { selectedPhotoItem = nil }
             }
-        }
-        .onChange(of: activeProperty.id) { _, _ in
+        })
+        view = AnyView(view.onChange(of: activeProperty.id) { _, _ in
             if !isEditingAnalysis {
                 syncBasicInputs(from: activeProperty)
                 syncInlineRentRollInputs(from: activeProperty)
                 syncTaxAssumptionsInputs(from: activeProperty)
                 isOwnedToggle = activeProperty.isOwned == true
             }
-        }
-        .onChange(of: activeProperty.rentRoll) { _, _ in
+            bindOfferStore()
+            bindScenarioStore()
+        })
+        view = AnyView(view.onChange(of: activeProperty.rentRoll) { _, _ in
             guard !isEditingAnalysis else { return }
             syncInlineRentRollInputs(from: activeProperty)
-        }
-        .onChange(of: activeProperty.marginalTaxRate) { _, _ in
+        })
+        view = AnyView(view.onChange(of: activeProperty.marginalTaxRate) { _, _ in
             guard !isSavingTaxAssumptions else { return }
             syncTaxAssumptionsInputs(from: activeProperty)
-        }
-        .onChange(of: activeProperty.landValuePercent) { _, _ in
+        })
+        view = AnyView(view.onChange(of: activeProperty.landValuePercent) { _, _ in
             guard !isSavingTaxAssumptions else { return }
             syncTaxAssumptionsInputs(from: activeProperty)
-        }
-        .onChange(of: inlineRentRollInputs) { _, _ in
+        })
+        view = AnyView(view.onChange(of: inlineRentRollInputs) { _, _ in
             scheduleInlineRentRollAutosave()
-        }
-        .onDisappear {
+        })
+        view = AnyView(view.onDisappear {
             inlineRentRollAutosaveTask?.cancel()
-        }
-        .alert("Delete Property?", isPresented: $showDeleteConfirm) {
+            offerTrackerStore.stop()
+            Task { await scenarioCompareStore.detach() }
+        })
+        view = AnyView(view.onChange(of: subscriptionManager.isPremium) { _, isPremium in
+            offerTrackerStore.setPremium(isPremium)
+            if isPremium && didOpenPaywallFromScenario {
+                AnalyticsTracker.track(.proUpgradeSuccessFromScenarioCompare, metadata: ["property_id": activeProperty.id ?? "unknown"])
+                didOpenPaywallFromScenario = false
+            }
+            if isPremium && didOpenPaywallFromOfferTracker {
+                AnalyticsTracker.track(.proUpgradeSuccessFromOfferTracker, metadata: ["property_id": activeProperty.id ?? "unknown"])
+                didOpenPaywallFromOfferTracker = false
+            }
+        })
+        view = AnyView(view.alert("Delete Property?", isPresented: $showDeleteConfirm) {
             Button("Delete", role: .destructive) {
                 dismiss()
                 Task { await deleteProperty() }
@@ -275,32 +309,43 @@ struct PropertyDetailView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("This will permanently remove the property from your portfolio.")
-        }
-        .alert("Unable to delete", isPresented: Binding(get: {
-            deleteError != nil
-        }, set: { _ in
-            deleteError = nil
-        })) {
+        })
+        view = AnyView(view.alert("Unable to delete", isPresented: Binding(get: { deleteError != nil }, set: { _ in deleteError = nil })) {
             Button("OK", role: .cancel) { }
         } message: {
             Text(deleteError ?? "Unknown error")
-        }
-        .alert("Action failed", isPresented: Binding(get: {
-            exportError != nil
-        }, set: { _ in
-            exportError = nil
-        })) {
+        })
+        view = AnyView(view.alert("Action failed", isPresented: Binding(get: { exportError != nil }, set: { _ in exportError = nil })) {
             Button("OK", role: .cancel) { }
         } message: {
             Text(exportError ?? "Unknown error")
-        }
-        .confirmationDialog("Discard unsaved analysis changes?", isPresented: $showDiscardChangesConfirm, titleVisibility: .visible) {
+        })
+        view = AnyView(view.alert("Unable to open offer tools", isPresented: Binding(get: { offerActionError != nil }, set: { _ in offerActionError = nil })) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(offerActionError ?? "Unknown error")
+        })
+        view = AnyView(view.confirmationDialog("Discard unsaved analysis changes?", isPresented: $showDiscardChangesConfirm, titleVisibility: .visible) {
             Button("Discard Changes", role: .destructive) {
                 isEditingAnalysis = false
                 exportError = nil
             }
             Button("Keep Editing", role: .cancel) { }
-        }
+        })
+        view = AnyView(view.alert("Delete Scenario?", isPresented: Binding(get: { scenarioToDelete != nil }, set: { isPresented in
+            if !isPresented { scenarioToDelete = nil }
+        })) {
+            Button("Delete", role: .destructive) {
+                guard let scenario = scenarioToDelete else { return }
+                Task { await deleteScenario(scenario) }
+            }
+            Button("Cancel", role: .cancel) {
+                scenarioToDelete = nil
+            }
+        } message: {
+            Text("This will permanently remove the saved scenario.")
+        })
+        return view
     }
 
     private var rootWithHero: AnyView {
@@ -324,6 +369,10 @@ struct PropertyDetailView: View {
                     .padding(.top, 12)
                     .padding(.bottom, 10)
 
+                propertyActionChipRow
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 14)
+
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 20) {
                         propertyBasicsSection.erasedToAnyView()
@@ -333,6 +382,7 @@ struct PropertyDetailView: View {
                         ownershipSection.erasedToAnyView()
                         mediaActionChipsRow.erasedToAnyView()
                         summarySection.erasedToAnyView()
+                        scenarioCompareSection.erasedToAnyView()
                         maximumAllowableOfferSection.erasedToAnyView()
                         pillarsSection.erasedToAnyView()
                         taxAssumptionsSection.erasedToAnyView()
@@ -362,6 +412,133 @@ struct PropertyDetailView: View {
             profileName: activeProfile.name,
             profileColorHex: activeProfile.colorHex,
             unitCount: effectiveUnitCount
+        )
+    }
+
+    private var activeTrackedOffer: PropertyOffer? {
+        offerTrackerStore.offers.first(where: { $0.isActive }) ?? offerTrackerStore.selectedOffer
+    }
+
+    private var offerChipSubtitle: String {
+        guard let offer = activeTrackedOffer else { return "Track terms" }
+        if let nextDeadline = nearestDeadlineSummary(for: offer) {
+            return nextDeadline.isUrgent ? "Due soon" : nextDeadline.label
+        }
+        return offer.status.title
+    }
+
+    private var offerChipStatusColor: Color {
+        guard let offer = activeTrackedOffer else { return Color.primaryYellow }
+        switch offer.status {
+        case .accepted:
+            return .green
+        case .rejected, .withdrawn, .expired:
+            return .red
+        case .submitted, .counterReceived:
+            return Color.blue.opacity(0.85)
+        case .draft, .readyToSubmit:
+            return Color.primaryYellow
+        }
+    }
+
+    private var offerChipBadgeText: String? {
+        guard let offer = activeTrackedOffer else { return "New" }
+        if let nextDeadline = nearestDeadlineSummary(for: offer), nextDeadline.isUrgent {
+            return "Due Soon"
+        }
+        if let revision = offerTrackerStore.currentRevision {
+            return "R\(revision.revisionNumber)"
+        }
+        return offer.status.title
+    }
+
+    private var offerChipIsEmphasized: Bool {
+        activeTrackedOffer != nil
+    }
+
+    private var propertyActionChipRow: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Capsule(style: .continuous)
+                    .fill(Color.primaryYellow)
+                    .frame(width: 30, height: 4)
+
+                Text("Deal Tools")
+                    .font(.system(.caption, design: .rounded).weight(.bold))
+                    .foregroundStyle(Color.richBlack.opacity(0.62))
+            }
+
+            Text("Open the offer flow, save scenarios, and launch deeper analysis.")
+                .font(.system(.footnote, design: .rounded).weight(.semibold))
+                .foregroundStyle(Color.richBlack.opacity(0.62))
+
+            DealToolChipStrip(chips: [
+                DealToolChipModel(
+                    id: "offer",
+                    icon: "doc.text.magnifyingglass",
+                    title: "Offer",
+                    subtitle: offerChipSubtitle,
+                    statusColor: offerChipStatusColor,
+                    badgeText: offerChipBadgeText,
+                    isEmphasized: offerChipIsEmphasized,
+                    isLocked: false
+                ) {
+                    AnalyticsTracker.track(.offerChipTapped, metadata: ["property_id": activeProperty.id ?? "unsaved"])
+                    guard !(activeProperty.id ?? "").isEmpty else {
+                        offerActionError = "Save the property first to create an offer."
+                        return
+                    }
+                    bindOfferStore()
+                    showOfferDetailSheet = true
+                },
+                DealToolChipModel(
+                    id: "scenario",
+                    icon: "square.split.2x2",
+                    title: "Scenario",
+                    subtitle: scenarioCompareStore.scenarios.isEmpty ? "Save current" : "Compare runs",
+                    statusColor: nil,
+                    badgeText: scenarioCompareStore.scenarios.isEmpty ? nil : "\(scenarioCompareStore.scenarios.count)",
+                    isEmphasized: !scenarioCompareStore.scenarios.isEmpty,
+                    isLocked: false
+                ) {
+                    pendingScenarioDefaultName = "Scenario \(scenarioCompareStore.scenarios.count + 1)"
+                    showScenarioNameSheet = true
+                },
+                DealToolChipModel(
+                    id: "deep_dive",
+                    icon: "rectangle.and.text.magnifyingglass",
+                    title: "Deep Dive",
+                    subtitle: persistedPropertySnapshot == nil ? "Records" : "Loaded",
+                    statusColor: nil,
+                    badgeText: nil,
+                    isEmphasized: persistedPropertySnapshot != nil,
+                    isLocked: false
+                ) {
+                    showDeepDive = true
+                },
+                DealToolChipModel(
+                    id: "share",
+                    icon: "square.and.arrow.up",
+                    title: "Share",
+                    subtitle: "Deal PDF",
+                    statusColor: nil,
+                    badgeText: nil,
+                    isEmphasized: false,
+                    isLocked: false
+                ) {
+                    Task { await exportPDF() }
+                }
+            ])
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.cardSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color.primaryYellow.opacity(0.14), lineWidth: 1)
+                )
+                .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 6)
         )
     }
 
@@ -950,6 +1127,59 @@ struct PropertyDetailView: View {
             }
         }
         .cardStyle()
+    }
+
+    private var sortedScenarios: [PropertyScenario] {
+        scenarioCompareStore.sortedScenarios(by: scenarioSort)
+    }
+
+    private var scenarioCompareSection: some View {
+        ScenarioCompareCardView(
+            isPremium: subscriptionManager.isPremium,
+            isExpanded: isScenarioCompareExpanded,
+            isLoading: scenarioCompareStore.isLoading || isSavingScenario,
+            errorMessage: scenarioActionError ?? scenarioCompareStore.errorMessage,
+            scenarios: sortedScenarios,
+            sortOption: scenarioSort,
+            onToggleExpanded: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isScenarioCompareExpanded.toggle()
+                }
+            },
+            onChangeSort: { scenarioSort = $0 },
+            onSaveCurrent: {
+                scenarioActionError = nil
+                guard scenarioCompareStore.canSaveScenario(isPremium: subscriptionManager.isPremium) else {
+                    scenarioActionError = subscriptionManager.isPremium
+                    ? "You can save up to 10 scenarios on Pro."
+                    : "Free tier allows 1 scenario. Upgrade to Pro for up to 10."
+                    if !subscriptionManager.isPremium {
+                        AnalyticsTracker.track(.scenarioLimitHitFree, metadata: ["property_id": activeProperty.id ?? "unknown"])
+                        AnalyticsTracker.track(.paywallOpenedFromScenarioCompare, metadata: ["property_id": activeProperty.id ?? "unknown"])
+                        didOpenPaywallFromScenario = true
+                        showMarketInsightPaywall = true
+                    }
+                    return
+                }
+                pendingScenarioDefaultName = "Scenario \(scenarioCompareStore.scenarios.count + 1)"
+                showScenarioNameSheet = true
+            },
+            onUnlock: {
+                AnalyticsTracker.track(.paywallOpenedFromScenarioCompare, metadata: ["property_id": activeProperty.id ?? "unknown"])
+                didOpenPaywallFromScenario = true
+                showMarketInsightPaywall = true
+            },
+            onApplyScenario: { scenario in
+                applyScenario(scenario)
+                AnalyticsTracker.track(.scenarioApplied, metadata: [
+                    "property_id": activeProperty.id ?? "unknown",
+                    "scenario_id": scenario.id
+                ])
+            },
+            onDeleteScenario: { scenario in
+                scenarioToDelete = scenario
+            }
+        )
     }
 
     private var maximumAllowableOfferSection: some View {
@@ -2186,6 +2416,42 @@ struct PropertyDetailView: View {
         return persistedProperty
     }
 
+    private struct OfferDeadlineSummary {
+        let label: String
+        let isUrgent: Bool
+    }
+
+    private func nearestDeadlineSummary(for offer: PropertyOffer) -> OfferDeadlineSummary? {
+        guard let revision = offerTrackerStore.currentRevision else { return nil }
+        let baseDate = revision.createdAt ?? offer.createdAt ?? Date()
+
+        var candidates: [(label: String, date: Date)] = []
+
+        if let expiresAt = offer.expiresAt {
+            candidates.append(("Expires", expiresAt))
+        }
+        if let estimatedCloseDate = revision.estimatedCloseDate {
+            candidates.append(("Close", estimatedCloseDate))
+        }
+        if let optionDays = revision.optionPeriodDays {
+            candidates.append(("Option", Calendar.current.date(byAdding: .day, value: optionDays, to: baseDate) ?? baseDate))
+        }
+        if let inspectionDays = revision.inspectionPeriodDays {
+            candidates.append(("Inspect", Calendar.current.date(byAdding: .day, value: inspectionDays, to: baseDate) ?? baseDate))
+        }
+        if let financingDays = revision.financingContingencyDays {
+            candidates.append(("Finance", Calendar.current.date(byAdding: .day, value: financingDays, to: baseDate) ?? baseDate))
+        }
+
+        guard let next = candidates
+            .filter({ $0.date >= Date() })
+            .sorted(by: { $0.date < $1.date })
+            .first else { return nil }
+
+        let isUrgent = next.date.timeIntervalSinceNow <= 60 * 60 * 48
+        return OfferDeadlineSummary(label: next.label, isUrgent: isUrgent)
+    }
+
     private var maximumAllowableOfferARV: Double {
         max(liveDisplayProperty.purchasePrice, 0)
     }
@@ -2296,6 +2562,164 @@ struct PropertyDetailView: View {
         do {
             try await propertyStore.updateProperty(updated)
         } catch { }
+    }
+
+    private func bindScenarioStore() {
+        guard let propertyId = activeProperty.id, !propertyId.isEmpty else { return }
+        Task {
+            await scenarioCompareStore.attach(propertyId: propertyId)
+        }
+        if hasTrackedScenarioOpenForPropertyId != propertyId {
+            hasTrackedScenarioOpenForPropertyId = propertyId
+            AnalyticsTracker.track(.scenarioCompareOpened, metadata: ["property_id": propertyId])
+        }
+    }
+
+    private func bindOfferStore() {
+        guard let propertyId = activeProperty.id, !propertyId.isEmpty else { return }
+        Task {
+            await offerTrackerStore.bind(propertyId: propertyId, isPremium: subscriptionManager.isPremium)
+        }
+    }
+
+    private func saveScenario(named rawName: String) async {
+        showScenarioNameSheet = false
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            scenarioActionError = "Scenario name is required."
+            return
+        }
+        guard let propertyId = activeProperty.id, !propertyId.isEmpty else {
+            scenarioActionError = "Property ID is missing."
+            return
+        }
+        guard scenarioCompareStore.canSaveScenario(isPremium: subscriptionManager.isPremium) else {
+            scenarioActionError = "Scenario limit reached."
+            return
+        }
+
+        let snapshot = liveDisplayProperty
+        let evaluation = evaluatedMetricsAndGrade(for: snapshot)
+        guard let metrics = evaluation.metrics else {
+            scenarioActionError = "Add financing and rent inputs before saving a scenario."
+            return
+        }
+
+        isSavingScenario = true
+        defer { isSavingScenario = false }
+        scenarioActionError = nil
+
+        let now = Date()
+        let scenario = PropertyScenario(
+            id: UUID().uuidString.lowercased(),
+            propertyId: propertyId,
+            userId: snapshot.userId ?? "",
+            name: name,
+            assumptions: PropertyScenarioAssumptions(
+                purchasePrice: snapshot.purchasePrice,
+                downPaymentPercent: snapshot.downPaymentPercent,
+                interestRate: snapshot.interestRate,
+                loanTermYears: snapshot.loanTermYears,
+                annualTaxes: snapshot.annualTaxes,
+                annualInsurance: snapshot.annualInsurance,
+                useStandardOperatingExpense: snapshot.useStandardOperatingExpense,
+                operatingExpenseRate: snapshot.operatingExpenseRate,
+                operatingExpenses: snapshot.operatingExpenses,
+                rentRoll: snapshot.rentRoll,
+                capexItems: snapshot.capexItems,
+                renoBudget: snapshot.renoBudget,
+                gradeProfileId: snapshot.gradeProfileId
+            ),
+            computedMetrics: PropertyScenarioMetrics(
+                annualCashFlow: metrics.annualCashFlow,
+                netOperatingIncome: metrics.netOperatingIncome,
+                capRate: metrics.capRate,
+                cashOnCash: metrics.cashOnCash,
+                dcr: metrics.debtCoverageRatio
+            ),
+            grade: evaluation.grade.rawValue,
+            createdAt: now,
+            updatedAt: now
+        )
+
+        await scenarioCompareStore.saveScenario(scenario)
+        if let latestError = scenarioCompareStore.errorMessage {
+            scenarioActionError = latestError
+            return
+        }
+
+        AnalyticsTracker.track(.scenarioSaved, metadata: [
+            "property_id": propertyId,
+            "scenario_id": scenario.id
+        ])
+    }
+
+    private func deleteScenario(_ scenario: PropertyScenario) async {
+        scenarioToDelete = nil
+        guard let propertyId = activeProperty.id, !propertyId.isEmpty else {
+            scenarioActionError = "Property ID is missing."
+            return
+        }
+
+        scenarioActionError = nil
+        await scenarioCompareStore.deleteScenario(id: scenario.id, propertyId: propertyId)
+        if let latestError = scenarioCompareStore.errorMessage {
+            scenarioActionError = latestError
+            return
+        }
+
+        AnalyticsTracker.track(.scenarioDeleted, metadata: [
+            "property_id": propertyId,
+            "scenario_id": scenario.id
+        ])
+    }
+
+    private func applyScenario(_ scenario: PropertyScenario) {
+        let assumptions = scenario.assumptions
+        isEditingAnalysis = true
+
+        purchasePrice = Formatters.currencyTwo.string(from: NSNumber(value: assumptions.purchasePrice)) ?? "\(assumptions.purchasePrice)"
+        downPaymentPercent = assumptions.downPaymentPercent.map { String(format: "%.2f", $0) } ?? ""
+        interestRate = assumptions.interestRate.map { String(format: "%.3f", $0) } ?? ""
+        loanTermYears = assumptions.loanTermYears ?? (activeProperty.loanTermYears ?? 30)
+        annualTaxes = assumptions.annualTaxes.map { Formatters.currencyTwo.string(from: NSNumber(value: $0)) ?? "\($0)" } ?? ""
+        annualInsurance = assumptions.annualInsurance.map { Formatters.currencyTwo.string(from: NSNumber(value: $0)) ?? "\($0)" } ?? ""
+        selectedProfileId = assumptions.gradeProfileId
+        renoBudget = assumptions.renoBudget.map { Formatters.currencyTwo.string(from: NSNumber(value: $0)) ?? "\($0)" } ?? ""
+
+        let mappedInputs = assumptions.rentRoll.isEmpty ? [RentUnitInput(monthlyRent: "", unitType: "", bedrooms: "", bathrooms: "", squareFeet: "")] : assumptions.rentRoll.map {
+            RentUnitInput(
+                monthlyRent: Formatters.currencyTwo.string(from: NSNumber(value: $0.monthlyRent)) ?? "\($0.monthlyRent)",
+                unitType: $0.unitType,
+                bedrooms: Formatters.bedsBaths.string(from: NSNumber(value: $0.bedrooms)) ?? String($0.bedrooms),
+                bathrooms: Formatters.bedsBaths.string(from: NSNumber(value: $0.bathrooms)) ?? String($0.bathrooms),
+                squareFeet: $0.squareFeet.map { String(Int($0)) } ?? ""
+            )
+        }
+        rentRollInputs = mappedInputs
+        inlineRentRollInputs = mappedInputs
+
+        expenseMode = (assumptions.useStandardOperatingExpense ?? true) ? .simple : .detailed
+        simpleExpenseRate = assumptions.operatingExpenseRate.map { String(format: "%.2f", $0) } ?? String(standardOperatingExpenseRate)
+        if let expenses = assumptions.operatingExpenses {
+            managementFee = expenses.first(where: { $0.name.localizedCaseInsensitiveContains("management") })
+                .map { Formatters.currencyTwo.string(from: NSNumber(value: $0.annualAmount)) ?? "\($0.annualAmount)" } ?? ""
+            maintenanceReserves = expenses.first(where: { $0.name.localizedCaseInsensitiveContains("maintenance") })
+                .map { Formatters.currencyTwo.string(from: NSNumber(value: $0.annualAmount)) ?? "\($0.annualAmount)" } ?? ""
+        } else {
+            managementFee = ""
+            maintenanceReserves = ""
+        }
+
+        capexInputs = (assumptions.capexItems ?? []).map {
+            CapexItemInput(
+                name: $0.name,
+                amount: Formatters.currencyTwo.string(from: NSNumber(value: $0.annualAmount)) ?? "\($0.annualAmount)"
+            )
+        }
+        if capexInputs.isEmpty {
+            capexInputs = [CapexItemInput(name: "", amount: "")]
+        }
     }
 
     private func applyMortgageScenario(_ scenario: MortgageScenarioValues) {
@@ -2598,6 +3022,13 @@ struct PropertyDetailView: View {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
 #endif
     }
+
+    private func openDealRoom() {
+        guard let propertyId = activeProperty.id else { return }
+        collaborationFocusPropertyId = propertyId
+        dashboardSelectedTab = 1
+        dismiss()
+    }
 }
 
 private extension View {
@@ -2763,6 +3194,167 @@ private struct PropertyCommandHeaderView: View {
                 .stroke(Color.primaryYellow.opacity(0.20), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 5)
+    }
+}
+
+private struct DealToolChipModel: Identifiable {
+    let id: String
+    let icon: String
+    let title: String
+    let subtitle: String?
+    let statusColor: Color?
+    let badgeText: String?
+    let isEmphasized: Bool
+    let isLocked: Bool
+    let action: () -> Void
+}
+
+private struct DealToolChipStrip: View {
+    let chips: [DealToolChipModel]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(chips) { chip in
+                    DealToolChip(chip: chip)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .scrollIndicators(.hidden)
+    }
+}
+
+private struct DealToolChip: View {
+    let chip: DealToolChipModel
+
+    var body: some View {
+        Button(action: chip.action) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        Circle()
+                            .fill(iconBadgeFill)
+                            .frame(width: 28, height: 28)
+
+                        Image(systemName: chip.icon)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(iconForeground)
+                    }
+
+                    Text(chip.title)
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color.richBlack)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 6)
+
+                    if chip.isLocked {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.richBlack.opacity(0.68))
+                    } else if chip.isEmphasized {
+                        Circle()
+                            .fill((chip.statusColor ?? Color.primaryYellow).opacity(0.95))
+                            .frame(width: 7, height: 7)
+                            .shadow(color: (chip.statusColor ?? Color.primaryYellow).opacity(0.45), radius: 6, x: 0, y: 0)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    if let subtitle = chip.subtitle, !subtitle.isEmpty {
+                        HStack(spacing: 6) {
+                            if let statusColor = chip.statusColor {
+                                Circle()
+                                    .fill(statusColor)
+                                    .frame(width: 6, height: 6)
+                            }
+
+                            Text(subtitle)
+                                .font(.system(.caption, design: .rounded).weight(.semibold))
+                                .foregroundStyle(Color.richBlack.opacity(0.72))
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if let badgeText = chip.badgeText, !badgeText.isEmpty {
+                        Text(badgeText)
+                            .font(.system(.caption2, design: .rounded).weight(.bold))
+                            .foregroundStyle(badgeForeground)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(badgeFill)
+                            )
+                    }
+                }
+            }
+            .frame(minWidth: 118, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(chip.isEmphasized ? Color.cardSurface.opacity(0.98) : Color.cardSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(borderColor, lineWidth: chip.isEmphasized ? 1.25 : 1)
+                    )
+                    .overlay(alignment: .topLeading) {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        (chip.statusColor ?? Color.primaryYellow).opacity(chip.isEmphasized ? 0.18 : 0.08),
+                                        .clear
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    }
+                    .shadow(color: shadowColor, radius: chip.isEmphasized ? 14 : 8, x: 0, y: chip.isEmphasized ? 8 : 4)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var borderColor: Color {
+        if chip.isEmphasized {
+            return (chip.statusColor ?? Color.primaryYellow).opacity(0.42)
+        }
+        return Color.richBlack.opacity(0.08)
+    }
+
+    private var shadowColor: Color {
+        if chip.isEmphasized {
+            return (chip.statusColor ?? Color.primaryYellow).opacity(0.2)
+        }
+        return Color.black.opacity(0.08)
+    }
+
+    private var iconBadgeFill: Color {
+        if chip.isEmphasized {
+            return (chip.statusColor ?? Color.primaryYellow).opacity(0.18)
+        }
+        return Color.softGray
+    }
+
+    private var iconForeground: Color {
+        chip.statusColor ?? (chip.isEmphasized ? Color.primaryYellow : Color.richBlack)
+    }
+
+    private var badgeFill: Color {
+        if chip.isLocked {
+            return Color.softGray
+        }
+        return (chip.statusColor ?? Color.primaryYellow).opacity(chip.isEmphasized ? 0.22 : 0.14)
+    }
+
+    private var badgeForeground: Color {
+        chip.isLocked ? Color.richBlack.opacity(0.7) : (chip.statusColor ?? Color.richBlack)
     }
 }
 

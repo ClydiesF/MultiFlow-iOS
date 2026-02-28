@@ -168,7 +168,7 @@ final class SubscriptionManager: NSObject, ObservableObject, PurchasesDelegate {
 
     func checkAccess(feature: FeatureType) -> Bool {
         switch feature {
-        case .autoFillAddress, .marketRentSuggestion, .nationwideTaxes, .marketInsights:
+        case .autoFillAddress, .marketRentSuggestion, .nationwideTaxes, .marketInsights, .dealRooms, .offerTracker:
             return isPremium
         }
     }
